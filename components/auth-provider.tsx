@@ -2,11 +2,13 @@
 
 import type React from "react"
 import { createContext, useContext, useEffect, useState } from "react"
-import { Hub } from "aws-amplify/utils"
-import { getCurrentUser, signOut } from "@/lib/aws-auth"
+import { auth } from "@/lib/auth"
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
+import { User } from "@supabase/supabase-js"
 
 interface AuthContextType {
-  user: any | null
+  user: User | null
+  profile: any
   userRole: string | null
   loading: boolean
   signOut: () => Promise<void>
@@ -14,87 +16,60 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
+  profile: null,
   userRole: null,
   loading: true,
   signOut: async () => {},
 })
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<any | null>(null)
+  const [user, setUser] = useState<User | null>(null)
+  const [profile, setProfile] = useState<any>(null)
   const [userRole, setUserRole] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const supabase = createClientComponentClient()
 
-  const updateUserState = (currentUser: any) => {
-    if (currentUser) {
-      setUser(currentUser)
-      const role = currentUser.attributes?.["custom:role"] || null
-      setUserRole(role)
-      console.log("✅ User authenticated:", currentUser.attributes?.email, "Role:", role)
-    } else {
-      setUser(null)
-      setUserRole(null)
-      console.log("❌ No authenticated user")
+  useEffect(() => {
+    checkUser()
+  }, [])
+
+  async function checkUser() {
+    try {
+      const { user, profile, error } = await auth.getSession()
+      
+      if (error) {
+        console.error("Error checking auth state:", error)
+        return
+      }
+
+      setUser(user)
+      setProfile(profile)
+      
+      if (user) {
+        // Fetch user role from profiles table
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', user.id)
+          .single()
+        
+        setUserRole(profileData?.role || null)
+        console.log("🎭 User role set to:", profileData?.role)
+      }
+    } catch (error) {
+      console.error("Error checking auth state:", error)
+    } finally {
+      setLoading(false)
     }
   }
 
-  useEffect(() => {
-    const checkUser = async () => {
-      try {
-        const { user: currentUser, error } = await getCurrentUser()
-        if (currentUser && !error) {
-          updateUserState(currentUser)
-        } else {
-          updateUserState(null)
-        }
-      } catch (error) {
-        console.log("No authenticated user found")
-        updateUserState(null)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    checkUser()
-
-    // Listen for auth events (only if AWS is configured)
-    const isAWSConfigured = !!(
-      process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID && process.env.NEXT_PUBLIC_COGNITO_USER_POOL_CLIENT_ID
-    )
-
-    if (isAWSConfigured) {
-      const hubListener = (data: any) => {
-        const { payload } = data
-
-        switch (payload.event) {
-          case "signedIn":
-            updateUserState(payload.data)
-            break
-          case "signedOut":
-            updateUserState(null)
-            break
-          case "signUp":
-            console.log("User signed up")
-            break
-          case "confirmSignUp":
-            console.log("User confirmed sign up")
-            break
-        }
-      }
-
-      Hub.listen("auth", hubListener)
-      return () => Hub.remove("auth", hubListener)
-    }
-  }, [])
-
-  const handleSignOut = async () => {
+  async function handleSignOut() {
     try {
-      console.log("🚪 Signing out user...")
-
-      await signOut()
-      updateUserState(null)
-
-      // Only clear current user session, not all stored data
-      localStorage.removeItem("mockAuth_currentUser")
+      const { error } = await auth.signOut()
+      if (error) throw error
+      setUser(null)
+      setProfile(null)
+      window.location.href = "/"
 
       console.log("✅ User signed out successfully")
 
@@ -105,13 +80,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (error) {
       console.error("❌ Error signing out:", error)
       // Even if there's an error, clear the state and redirect
-      updateUserState(null)
+      setUser(null)
+      setProfile(null)
       window.location.href = "/"
     }
   }
 
   return (
-    <AuthContext.Provider value={{ user, userRole, loading, signOut: handleSignOut }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ user, profile, userRole, loading, signOut: handleSignOut }}>{children}</AuthContext.Provider>
   )
 }
 

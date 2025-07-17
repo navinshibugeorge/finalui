@@ -1,6 +1,14 @@
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- Enable row level security
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- Create enum types
+CREATE TYPE user_role_enum AS ENUM ('citizen', 'vendor', 'industry', 'admin');
+CREATE TYPE request_status_enum AS ENUM ('pending', 'assigned', 'in_progress', 'completed', 'cancelled');
+CREATE TYPE waste_type_enum AS ENUM ('plastic', 'paper', 'glass', 'metal', 'electronic', 'organic', 'other');
+
 -- Profiles table (extends Supabase auth.users)
 CREATE TABLE profiles (
     id UUID REFERENCES auth.users(id) PRIMARY KEY,
@@ -8,10 +16,11 @@ CREATE TABLE profiles (
     name TEXT NOT NULL,
     contact TEXT NOT NULL,
     address TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('citizen', 'vendor', 'industry', 'admin')),
+    role user_role_enum NOT NULL,
     company_name TEXT,
     factory_type TEXT,
-    waste_types TEXT[],
+    waste_types waste_type_enum[],
+    registration_approved BOOLEAN DEFAULT true,
     is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -134,26 +143,37 @@ CREATE INDEX idx_transactions_vendor_id ON transactions(vendor_id);
 CREATE INDEX idx_transactions_pickup_timestamp ON transactions(pickup_timestamp);
 
 -- Row Level Security (RLS) policies
-ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE citizens ENABLE ROW LEVEL SECURITY;
-ALTER TABLE vendors ENABLE ROW LEVEL SECURITY;
-ALTER TABLE vendor_waste_types ENABLE ROW LEVEL SECURITY;
-ALTER TABLE factories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bins ENABLE ROW LEVEL SECURITY;
-ALTER TABLE pickup_requests ENABLE ROW LEVEL SECURITY;
-ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
+-- Temporarily disabled RLS for development
+-- ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE citizens ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE vendors ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE vendor_waste_types ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE factories ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE bins ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE pickup_requests ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
 
 -- Profiles policies
 CREATE POLICY "Users can view own profile" ON profiles FOR SELECT USING (auth.uid() = id);
 CREATE POLICY "Users can update own profile" ON profiles FOR UPDATE USING (auth.uid() = id);
+CREATE POLICY "Users can insert own profile" ON profiles FOR INSERT WITH CHECK (auth.uid() = id);
+CREATE POLICY "Admin can insert any profile" ON profiles FOR INSERT WITH CHECK (
+    EXISTS (
+        SELECT 1 FROM profiles 
+        WHERE id = auth.uid() 
+        AND role = 'admin'
+    )
+);
 
 -- Citizens policies
 CREATE POLICY "Citizens can view own data" ON citizens FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "Citizens can update own data" ON citizens FOR UPDATE USING (auth.uid() = user_id);
+CREATE POLICY "Citizens can insert own data" ON citizens FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 -- Vendors policies
 CREATE POLICY "Vendors can view own data" ON vendors FOR SELECT USING (auth.uid() = vendor_id);
 CREATE POLICY "Vendors can update own data" ON vendors FOR UPDATE USING (auth.uid() = vendor_id);
+CREATE POLICY "Vendors can insert own data" ON vendors FOR INSERT WITH CHECK (auth.uid() = vendor_id);
 CREATE POLICY "Public can view active vendors" ON vendors FOR SELECT USING (is_active = true);
 
 -- Vendor waste types policies
@@ -163,6 +183,7 @@ CREATE POLICY "Public can view vendor waste types" ON vendor_waste_types FOR SEL
 -- Factories policies
 CREATE POLICY "Factories can view own data" ON factories FOR SELECT USING (auth.uid() = factory_id);
 CREATE POLICY "Factories can update own data" ON factories FOR UPDATE USING (auth.uid() = factory_id);
+CREATE POLICY "Factories can insert own data" ON factories FOR INSERT WITH CHECK (auth.uid() = factory_id);
 
 -- Bins policies
 CREATE POLICY "Factories can view own bins" ON bins FOR SELECT USING (auth.uid() = factory_id);
@@ -190,6 +211,29 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
--- Triggers for updated_at
-CREATE TRIGGER update_profiles_updated_at BEFORE UPDATE ON profiles FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_pickup_requests_updated_at BEFORE UPDATE ON pickup_requests FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+-- Function to set registration approval based on role
+CREATE OR REPLACE FUNCTION set_registration_approval()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.role = 'industry' THEN
+        NEW.registration_approved = false;
+    END IF;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+-- Triggers for updated_at and registration approval
+CREATE TRIGGER update_profiles_updated_at 
+    BEFORE UPDATE ON profiles 
+    FOR EACH ROW 
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER set_profile_registration_approval
+    BEFORE INSERT ON profiles
+    FOR EACH ROW
+    EXECUTE FUNCTION set_registration_approval();
+
+CREATE TRIGGER update_pickup_requests_updated_at 
+    BEFORE UPDATE ON pickup_requests 
+    FOR EACH ROW 
+    EXECUTE FUNCTION update_updated_at_column();
