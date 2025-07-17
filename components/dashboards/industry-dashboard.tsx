@@ -45,6 +45,92 @@ export function IndustryDashboard() {
   const [selectedBin, setSelectedBin] = useState<any>(null)
   const [showBinModal, setShowBinModal] = useState(false)
 
+  // API endpoints for individual bins
+  const BIN_ENDPOINTS = [
+    "https://pmwocc8fz1.execute-api.eu-north-1.amazonaws.com/prod/GetIndustryBinData?binid=BIN001",
+    "https://pmwocc8fz1.execute-api.eu-north-1.amazonaws.com/prod/GetIndustryBinData?binid=BIN002",
+    "https://pmwocc8fz1.execute-api.eu-north-1.amazonaws.com/prod/GetIndustryBinData?binid=BIN003",
+    "https://pmwocc8fz1.execute-api.eu-north-1.amazonaws.com/prod/GetIndustryBinData?binid=BIN004",
+    "https://pmwocc8fz1.execute-api.eu-north-1.amazonaws.com/prod/GetIndustryBinData?binid=BIN005"
+  ]
+
+  // Function to fetch data from individual bin endpoints
+  const fetchBinData = async (showLoadingSpinner = false) => {
+    try {
+      if (showLoadingSpinner) {
+        setLoading(true)
+      }
+      
+      // Fetch data from all 5 bin endpoints concurrently
+      const promises = BIN_ENDPOINTS.map(endpoint => 
+        fetch(endpoint).then(response => response.json())
+      )
+      
+      const results = await Promise.all(promises)
+      
+      // Flatten the results and transform data
+      const allBinData = results.flat()
+      const transformedBins = allBinData.map((item: any) => ({
+        bin_id: item.binid,
+        waste_type: item.type_of_waste,
+        fill_level: item.filllevel,
+        status: getStatusFromFillLevel(item.filllevel),
+        location: item.industry_address,
+        coordinates: "11.9611, 89.5900", // Default coordinates
+        last_updated: item.timestamp,
+        capacity: item.total_bin_volume,
+        temperature: 25, // Default temperature
+        humidity: 60, // Default humidity
+        battery_level: 85, // Default battery level
+        quality_grade: getQualityGrade(item.waste_quality),
+        avg_fill_time: "2.5 days", // Default avg fill time
+        condition_image: `/placeholder.svg?height=200&width=300&text=${item.type_of_waste.toUpperCase()}+WASTE`,
+        waste_quality: item.waste_quality,
+        volume: item.volume,
+        pickup_request: item.pickup_request,
+        industry_name: item.industry_name,
+        industry_id: item.industryid,
+      }))
+      
+      setBins(transformedBins)
+    } catch (error) {
+      console.error('Error fetching bin data:', error)
+      toast({
+        title: "Error",
+        description: "Failed to fetch bin data. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      if (showLoadingSpinner) {
+        setLoading(false)
+      }
+    }
+  }
+
+  // Helper function to determine status based on fill level
+  const getStatusFromFillLevel = (fillLevel: number) => {
+    if (fillLevel >= 90) return "critical"
+    if (fillLevel >= 70) return "high"
+    if (fillLevel >= 40) return "medium"
+    return "low"
+  }
+
+  // Helper function to get quality grade
+  const getQualityGrade = (quality: string) => {
+    switch (quality) {
+      case "good":
+        return "A"
+      case "moderate":
+        return "B"
+      case "poor":
+        return "C"
+      case "hazardous":
+        return "D"
+      default:
+        return "B"
+    }
+  }
+
   // Mock data for demonstration
   const mockBins = [
     {
@@ -119,10 +205,19 @@ export function IndustryDashboard() {
   ]
 
   useEffect(() => {
-    // Use mock data for demonstration
-    setBins(mockBins)
+    // Fetch data on component mount with loading spinner
+    fetchBinData(true)
+    
+    // Set up real-time updates every 1 seconds (background updates)
+    const interval = setInterval(() => fetchBinData(false), 1000)
+    
+    // Cleanup interval on unmount
+    return () => clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    // Set mock pickup requests
     setPickupRequests(mockPickupRequests)
-    setLoading(false)
   }, [])
 
   const getStatusColor = (status: string) => {
@@ -172,18 +267,48 @@ export function IndustryDashboard() {
   return (
     <DashboardLayout title="Industry Dashboard" userRole="industry">
       <div className="space-y-6">
-        {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Bins</CardTitle>
-              <Trash2 className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{bins.length}</div>
-              <p className="text-xs text-muted-foreground">Number of active bins</p>
-            </CardContent>
-          </Card>
+        {/* Header with refresh button */}
+        <div className="flex justify-between items-center">
+          <div>
+            <h2 className="text-2xl font-bold">Industry Dashboard</h2>
+            <p className="text-muted-foreground">Monitor your waste bins in real-time</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              <span>Live Data</span>
+            </div>
+            <Button onClick={() => fetchBinData(true)} disabled={loading}>
+              {loading ? (
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary" />
+              ) : (
+                <>
+                  <Bell className="mr-2 h-4 w-4" />
+                  Refresh Data
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center h-64">
+            <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
+          </div>
+        ) : (
+          <>
+            {/* Summary Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Total Bins</CardTitle>
+                  <Trash2 className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{bins.length}</div>
+                  <p className="text-xs text-muted-foreground">Number of active bins</p>
+                </CardContent>
+              </Card>
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -225,6 +350,26 @@ export function IndustryDashboard() {
             <AlertTriangle className="h-4 w-4 text-red-600" />
             <AlertDescription className="text-red-800">
               <strong>{criticalBins.length} bin(s)</strong> are critically full and require immediate pickup!
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Pickup Request Alert */}
+        {bins.filter(bin => bin.pickup_request).length > 0 && (
+          <Alert className="border-blue-200 bg-blue-50">
+            <Truck className="h-4 w-4 text-blue-600" />
+            <AlertDescription className="text-blue-800">
+              <strong>{bins.filter(bin => bin.pickup_request).length} bin(s)</strong> have active pickup requests.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Hazardous Waste Alert */}
+        {bins.filter(bin => bin.waste_quality === 'hazardous').length > 0 && (
+          <Alert className="border-orange-200 bg-orange-50">
+            <AlertTriangle className="h-4 w-4 text-orange-600" />
+            <AlertDescription className="text-orange-800">
+              <strong>{bins.filter(bin => bin.waste_quality === 'hazardous').length} bin(s)</strong> contain hazardous waste requiring special handling.
             </AlertDescription>
           </Alert>
         )}
@@ -374,12 +519,20 @@ export function IndustryDashboard() {
                                           <span>{selectedBin.capacity}L</span>
                                         </div>
                                         <div className="flex justify-between">
+                                          <span>Current Volume:</span>
+                                          <span>{selectedBin.volume}L</span>
+                                        </div>
+                                        <div className="flex justify-between">
                                           <span>Quality Grade:</span>
                                           <span>{selectedBin.quality_grade}</span>
                                         </div>
                                         <div className="flex justify-between">
-                                          <span>Avg Fill Time:</span>
-                                          <span>{selectedBin.avg_fill_time}</span>
+                                          <span>Waste Quality:</span>
+                                          <span className="capitalize">{selectedBin.waste_quality}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span>Pickup Request:</span>
+                                          <span>{selectedBin.pickup_request ? 'Yes' : 'No'}</span>
                                         </div>
                                         <div className="flex justify-between">
                                           <span>Battery Level:</span>
@@ -392,6 +545,19 @@ export function IndustryDashboard() {
                                       <p className="text-sm text-muted-foreground">{selectedBin.location}</p>
                                       <p className="text-xs text-muted-foreground">{selectedBin.coordinates}</p>
                                     </div>
+                                    <div>
+                                      <h4 className="font-semibold mb-2">Industry Details</h4>
+                                      <div className="space-y-2 text-sm">
+                                        <div className="flex justify-between">
+                                          <span>Industry Name:</span>
+                                          <span>{selectedBin.industry_name}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span>Industry ID:</span>
+                                          <span>{selectedBin.industry_id}</span>
+                                        </div>
+                                      </div>
+                                    </div>
                                   </div>
                                   <div className="space-y-4">
                                     <div>
@@ -402,6 +568,23 @@ export function IndustryDashboard() {
                                           alt={`${selectedBin.waste_type} waste`}
                                           className="w-full h-full object-cover rounded-lg"
                                         />
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <h4 className="font-semibold mb-2">Environmental Data</h4>
+                                      <div className="space-y-2 text-sm">
+                                        <div className="flex justify-between">
+                                          <span>Temperature:</span>
+                                          <span>{selectedBin.temperature}°C</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span>Humidity:</span>
+                                          <span>{selectedBin.humidity}%</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span>Last Updated:</span>
+                                          <span>{new Date(selectedBin.last_updated).toLocaleString()}</span>
+                                        </div>
                                       </div>
                                     </div>
                                   </div>
@@ -636,6 +819,8 @@ export function IndustryDashboard() {
             </div>
           </TabsContent>
         </Tabs>
+          </>
+        )}
       </div>
     </DashboardLayout>
   )
