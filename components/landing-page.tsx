@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Recycle, Truck, Factory, Shield, BarChart3, MapPin } from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
-import { DevHelper } from "@/components/dev-helper"
+
 
 export function LandingPage() {
   const [authModal, setAuthModal] = useState<{ open: boolean; mode: "signin" | "signup"; role?: string }>({
@@ -168,7 +168,7 @@ export function LandingPage() {
         onModeChange={(mode) => setAuthModal((prev) => ({ ...prev, mode }))}
       />
 
-      <DevHelper />
+
     </div>
   )
 }
