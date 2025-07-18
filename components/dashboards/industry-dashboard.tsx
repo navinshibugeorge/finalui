@@ -35,6 +35,7 @@ import {
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { useAuth } from "@/components/auth-provider"
 import { useToast } from "@/hooks/use-toast"
+import { pickupRequestService } from "@/lib/pickup-request-service"
 
 export function IndustryDashboard() {
   const { user } = useAuth()
@@ -44,6 +45,8 @@ export function IndustryDashboard() {
   const [loading, setLoading] = useState(true)
   const [selectedBin, setSelectedBin] = useState<any>(null)
   const [showBinModal, setShowBinModal] = useState(false)
+  const [processingRequests, setProcessingRequests] = useState<Set<string>>(new Set())
+  const [requestedBins, setRequestedBins] = useState<Set<string>>(new Set()) // Track bins that already have requests
 
   // API endpoints for individual bins
   const BIN_ENDPOINTS = [
@@ -59,6 +62,12 @@ export function IndustryDashboard() {
     try {
       if (showLoadingSpinner) {
         setLoading(true)
+      }
+
+      // Check if user is authenticated
+      if (!user?.id) {
+        console.warn('User not authenticated, skipping bin data fetch')
+        return
       }
       
       // Fetch data from all 5 bin endpoints concurrently
@@ -89,10 +98,55 @@ export function IndustryDashboard() {
         volume: item.volume,
         pickup_request: item.pickup_request,
         industry_name: item.industry_name,
-        industry_id: item.industryid,
+        industry_id: user?.id || null, // Use authenticated user's UUID instead of API's industry_id
+        factory_id: user?.id || null,  // Add factory_id as well
       }))
+
+      // Filter out bins that don't have a valid factory_id
+      const validBins = transformedBins.filter(bin => bin.factory_id)
       
-      setBins(transformedBins)
+      console.log('Transformed bins:', validBins.length, 'valid bins out of', transformedBins.length)
+      
+      setBins(validBins)
+      
+      // Reset tracking for bins that went below 80%
+      resetBinTracking(validBins)
+      
+      // Check for bins above 80% and create pickup requests
+      const highFillBins = validBins.filter(bin => bin.fill_level >= 80)
+      
+      // Get existing pickup requests to check which bins already have active requests
+      const existingRequests = pickupRequests.filter(req => 
+        req.status === 'pending' || req.status === 'assigned' || req.status === 'bidding'
+      )
+      const binsWithActiveRequests = new Set(existingRequests.map(req => req.waste_type))
+      
+      console.log('High fill bins:', highFillBins.length)
+      console.log('Existing active requests:', existingRequests.length)
+      console.log('Bins with active requests:', Array.from(binsWithActiveRequests))
+      console.log('Requested bins tracker:', Array.from(requestedBins))
+      
+      for (const bin of highFillBins) {
+        const binKey = `${bin.waste_type}_${bin.bin_id}`
+        const shouldCreateRequest = !processingRequests.has(bin.bin_id) && 
+                                  !requestedBins.has(binKey) && 
+                                  !binsWithActiveRequests.has(bin.waste_type) && 
+                                  user?.id
+        
+        console.log(`Bin ${bin.bin_id} (${bin.waste_type}): shouldCreateRequest=${shouldCreateRequest}`)
+        
+        if (shouldCreateRequest) {
+          console.log(`Creating pickup request for bin ${bin.bin_id}`)
+          // Mark this bin as having a request to prevent duplicates
+          setRequestedBins(prev => new Set(prev).add(binKey))
+          createPickupRequestForBin(bin)
+        }
+      }
+      
+      // Fetch current pickup requests
+      if (user?.id) {
+        fetchIndustryPickupRequests()
+      }
     } catch (error) {
       console.error('Error fetching bin data:', error)
       toast({
@@ -131,94 +185,131 @@ export function IndustryDashboard() {
     }
   }
 
-  // Mock data for demonstration
-  const mockBins = [
-    {
-      bin_id: "B475",
-      waste_type: "plastic",
-      fill_level: 94,
-      status: "critical",
-      location: "Factory Floor A",
-      coordinates: "11.9611, 89.5900",
-      last_updated: "2024-07-11T15:04:00Z",
-      capacity: 100,
-      temperature: 28,
-      humidity: 65,
-      battery_level: 85,
-      quality_grade: "A",
-      avg_fill_time: "2.5 days",
-      condition_image: "/placeholder.svg?height=200&width=300&text=PLASTIC+WASTE",
-    },
-    {
-      bin_id: "B486",
-      waste_type: "metal",
-      fill_level: 17,
-      status: "low",
-      location: "Warehouse B",
-      coordinates: "11.9943, 89.5457",
-      last_updated: "2024-07-11T15:30:00Z",
-      capacity: 150,
-      temperature: 25,
-      humidity: 58,
-      battery_level: 15,
-      quality_grade: "B",
-      avg_fill_time: "4.2 days",
-      condition_image: "/placeholder.svg?height=200&width=300&text=METAL+SCRAP",
-    },
-    {
-      bin_id: "B272",
-      waste_type: "glass",
-      fill_level: 84,
-      status: "high",
-      location: "Production Line C",
-      coordinates: "11.9927, 89.5616",
-      last_updated: "2024-07-10T15:20:00Z",
-      capacity: 80,
-      temperature: 30,
-      humidity: 70,
-      battery_level: 92,
-      quality_grade: "A",
-      avg_fill_time: "3.1 days",
-      condition_image: "/placeholder.svg?height=200&width=300&text=GLASS+WASTE",
-    },
-  ]
+  // Create pickup request for bins above 80%
+  const createPickupRequestForBin = async (bin: any) => {
+    try {
+      setProcessingRequests(prev => new Set(prev).add(bin.bin_id))
+      
+      // Ensure we have the required user ID
+      if (!user?.id) {
+        throw new Error('User not authenticated')
+      }
 
-  const mockPickupRequests = [
-    {
-      request_id: "RQ2341",
-      vendor: "WasteGo Pvt",
-      bin_id: "B475",
-      quote: 1425,
-      eta_window: "4:00–4:30 PM",
-      status: "assigned",
-      waste_type: "plastic",
-    },
-    {
-      request_id: "RQ2338",
-      vendor: "RecyloLogix",
-      bin_id: "B272",
-      quote: 880,
-      eta_window: "2:30–3:00 PM",
-      status: "completed",
-      waste_type: "glass",
-    },
-  ]
+      // Ensure bin has required factory_id
+      if (!bin.factory_id) {
+        console.error('Missing factory_id in bin data:', bin)
+        throw new Error('Factory ID is missing from bin data')
+      }
+
+      console.log('Creating pickup request for bin:', bin.bin_id, 'with factory_id:', bin.factory_id)
+      
+      const newRequest = await pickupRequestService.createPickupRequest(bin)
+      
+      // Update pickup requests state immediately
+      setPickupRequests(prev => [...prev, newRequest])
+      
+      toast({
+        title: "Pickup Request Created",
+        description: `Automatic pickup request created for bin ${bin.bin_id} (${bin.fill_level}% full)`,
+      })
+    } catch (error: any) {
+      if (error.message.includes('already exists')) {
+        // If request already exists, just silently continue
+        console.log('Pickup request already exists for bin:', bin.bin_id)
+      } else {
+        console.error('Error creating pickup request:', error)
+        toast({
+          title: "Error",
+          description: error.message || "Failed to create pickup request",
+          variant: "destructive",
+        })
+        
+        // Remove from requested bins if failed to create
+        const binKey = `${bin.waste_type}_${bin.bin_id}`
+        setRequestedBins(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(binKey)
+          return newSet
+        })
+      }
+    } finally {
+      setProcessingRequests(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(bin.bin_id)
+        return newSet
+      })
+    }
+  }
+
+  // Fetch pickup requests for this industry
+  const fetchIndustryPickupRequests = async () => {
+    try {
+      if (!user?.id) return
+      
+      const requests = await pickupRequestService.getIndustryPickupRequests(user.id)
+      setPickupRequests(requests)
+      
+      // Clean up requestedBins for completed/cancelled requests
+      const activeRequests = requests.filter(req => 
+        req.status === 'pending' || req.status === 'assigned' || req.status === 'bidding'
+      )
+      const activeWasteTypes = new Set(activeRequests.map(req => req.waste_type))
+      
+      setRequestedBins(prev => {
+        const newSet = new Set<string>()
+        prev.forEach(binKey => {
+          const wasteType = binKey.split('_')[0]
+          if (activeWasteTypes.has(wasteType)) {
+            newSet.add(binKey)
+          }
+        })
+        return newSet
+      })
+    } catch (error) {
+      console.error('Error fetching pickup requests:', error)
+    }
+  }
+
+  // Reset tracking for bins that go below 80%
+  const resetBinTracking = (validBins: any[]) => {
+    const binsBelow80 = validBins.filter(bin => bin.fill_level < 80)
+    if (binsBelow80.length > 0) {
+      setRequestedBins(prev => {
+        const newSet = new Set(prev)
+        binsBelow80.forEach(bin => {
+          const binKey = `${bin.waste_type}_${bin.bin_id}`
+          newSet.delete(binKey)
+        })
+        return newSet
+      })
+    }
+  }
+
+  const criticalBins = bins.filter((bin) => bin.fill_level >= 90)
+  const highFillBins = bins.filter((bin) => bin.fill_level >= 80)
+  const lowBatteryBins = bins.filter((bin) => bin.battery_level < 20)
+  const completedPickups = pickupRequests.filter((req) => req.status === "completed").length
 
   useEffect(() => {
-    // Fetch data on component mount with loading spinner
-    fetchBinData(true)
-    
-    // Set up real-time updates every 1 seconds (background updates)
-    const interval = setInterval(() => fetchBinData(false), 1000)
-    
-    // Cleanup interval on unmount
-    return () => clearInterval(interval)
-  }, [])
+    // Only fetch data if user is authenticated
+    if (user?.id) {
+      // Fetch data on component mount with loading spinner
+      fetchBinData(true)
+      
+      // Set up real-time updates every 30 seconds (background updates)
+      const interval = setInterval(() => fetchBinData(false), 30000)
+      
+      // Cleanup interval on unmount
+      return () => clearInterval(interval)
+    }
+  }, [user?.id]) // Add user?.id as dependency
 
   useEffect(() => {
-    // Set mock pickup requests
-    setPickupRequests(mockPickupRequests)
-  }, [])
+    // Fetch pickup requests when user changes
+    if (user?.id) {
+      fetchIndustryPickupRequests()
+    }
+  }, [user?.id])
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -251,11 +342,6 @@ export function IndustryDashboard() {
         return <CheckCircle className="h-4 w-4" />
     }
   }
-
-  const criticalBins = bins.filter((bin) => bin.fill_level >= 90)
-  const highFillBins = bins.filter((bin) => bin.fill_level >= 80)
-  const lowBatteryBins = bins.filter((bin) => bin.battery_level < 20)
-  const completedPickups = mockPickupRequests.filter((req) => req.status === "completed").length
 
   const fillLevelDistribution = {
     critical: bins.filter((bin) => bin.fill_level >= 90).length,
@@ -604,9 +690,9 @@ export function IndustryDashboard() {
           <TabsContent value="pickups" className="space-y-4">
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-semibold">Pickup Requests</h3>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" />
-                New Request
+              <Button onClick={fetchIndustryPickupRequests}>
+                <Bell className="mr-2 h-4 w-4" />
+                Refresh
               </Button>
             </div>
 
@@ -616,47 +702,127 @@ export function IndustryDashboard() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Request ID</TableHead>
-                      <TableHead>Vendor</TableHead>
-                      <TableHead>Bin ID</TableHead>
-                      <TableHead>Quote</TableHead>
-                      <TableHead>ETA Window</TableHead>
+                      <TableHead>Waste Type</TableHead>
+                      <TableHead>Quantity</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead>Actions</TableHead>
+                      <TableHead>Bids</TableHead>
+                      <TableHead>Assigned Vendor</TableHead>
+                      <TableHead>Amount</TableHead>
+                      <TableHead>Created</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {mockPickupRequests.map((request) => (
-                      <TableRow key={request.request_id}>
-                        <TableCell className="font-medium">{request.request_id}</TableCell>
-                        <TableCell>{request.vendor}</TableCell>
-                        <TableCell>{request.bin_id}</TableCell>
-                        <TableCell>₹{request.quote}</TableCell>
-                        <TableCell>{request.eta_window}</TableCell>
-                        <TableCell>
-                          <Badge className={getStatusColor(request.status)}>{request.status.toUpperCase()}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Button variant="outline" size="sm">
-                            <Eye className="mr-2 h-4 w-4" />
-                            Track
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {pickupRequests.map((request) => {
+                      const bids = request.vendor_bids || []
+                      const highestBid = bids.length > 0 ? Math.max(...bids.map((bid: any) => bid.bid_amount)) : 0
+                      const winningBid = bids.find((bid: any) => bid.status === 'won')
+                      
+                      return (
+                        <TableRow key={request.request_id}>
+                          <TableCell className="font-medium">
+                            {request.request_id.substring(0, 8)}...
+                          </TableCell>
+                          <TableCell className="capitalize">{request.waste_type}</TableCell>
+                          <TableCell>{request.estimated_quantity} kg</TableCell>
+                          <TableCell>
+                            <Badge className={getStatusColor(request.status)}>
+                              {request.status.toUpperCase()}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm">{bids.length}</span>
+                              {highestBid > 0 && (
+                                <Badge variant="outline" className="text-xs">
+                                  High: ₹{highestBid}
+                                </Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            {winningBid ? (
+                              <div className="text-sm">
+                                <div className="font-medium">{winningBid.vendor_name}</div>
+                                <div className="text-muted-foreground text-xs">
+                                  {winningBid.vendor_contact}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {request.total_amount ? (
+                              <span className="font-medium">₹{request.total_amount}</span>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <div className="text-sm">
+                              {new Date(request.created_at).toLocaleDateString()}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
                   </TableBody>
                 </Table>
               </CardContent>
             </Card>
 
+            {pickupRequests.length === 0 && (
+              <Card>
+                <CardContent className="p-8 text-center">
+                  <Truck className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold mb-2">No Pickup Requests</h3>
+                  <p className="text-muted-foreground">
+                    Pickup requests will be automatically created when bins reach 80% capacity.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
             <Card>
               <CardHeader>
-                <CardTitle>Vendor Assignment Info</CardTitle>
-                <CardDescription>Vendors are assigned based on proximity, quote, and availability</CardDescription>
+                <CardTitle>Automatic Pickup System</CardTitle>
+                <CardDescription>How our intelligent pickup system works</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="text-sm text-muted-foreground">
-                  Our smart algorithm considers multiple factors including distance, pricing, vendor ratings, and
-                  real-time availability to ensure optimal pickup assignments.
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <span className="text-xs font-medium text-blue-600">1</span>
+                    </div>
+                    <div>
+                      <h4 className="font-medium">Automatic Detection</h4>
+                      <p className="text-sm text-muted-foreground">
+                        When any bin reaches 80% capacity, a pickup request is automatically created.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <span className="text-xs font-medium text-blue-600">2</span>
+                    </div>
+                    <div>
+                      <h4 className="font-medium">Vendor Bidding</h4>
+                      <p className="text-sm text-muted-foreground">
+                        Vendors have 5 minutes to submit their bids for the pickup request.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <span className="text-xs font-medium text-blue-600">3</span>
+                    </div>
+                    <div>
+                      <h4 className="font-medium">Winner Selection</h4>
+                      <p className="text-sm text-muted-foreground">
+                        The vendor with the highest bid wins the pickup contract automatically.
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </CardContent>
             </Card>

@@ -35,6 +35,8 @@ import { DashboardLayout } from "@/components/dashboard-layout"
 import { useAuth } from "@/components/auth-provider"
 import { getPickupRequests, createBid, getCitizenPickupRequests, updateCitizenPickupRequest } from "@/lib/aws-api"
 import { useToast } from "@/hooks/use-toast"
+import { VendorBidding } from "@/components/vendor-bidding"
+import { pickupRequestService } from "@/lib/pickup-request-service"
 
 interface CitizenPickupRequest {
   request_id: string
@@ -141,6 +143,15 @@ export function VendorDashboard() {
       })
       setTimers(initialTimers)
     }
+    
+    // Set up intervals for real-time updates
+    const pickupInterval = setInterval(fetchPickupRequests, 10000) // Check every 10 seconds for new requests
+    const citizenInterval = setInterval(fetchCitizenPickupRequests, 30000) // Check every 30 seconds
+    
+    return () => {
+      clearInterval(pickupInterval)
+      clearInterval(citizenInterval)
+    }
   }, [user])
 
   // Timer countdown effect
@@ -171,26 +182,20 @@ export function VendorDashboard() {
 
   const fetchPickupRequests = async () => {
     try {
-      const { data, error } = await getPickupRequests(undefined, "vendor")
-      if (error) {
-        console.warn("Could not fetch pickup requests:", error)
-        const mockRequests = [
-          {
-            request_id: "req_001",
-            user_id: "citizen@example.com",
-            waste_type: "plastic",
-            size_category: "medium",
-            estimated_quantity: 10,
-            estimated_price: 75,
-            status: "pending",
-            created_at: "2024-01-18T09:15:00Z",
-            request_type: "citizen",
-          },
-        ]
-        setPickupRequests(mockRequests)
-      } else {
-        setPickupRequests(data || [])
-      }
+      // First, expire old requests
+      await pickupRequestService.expireOldRequests()
+      
+      // Get only active pickup requests that are pending and available for bidding
+      const data = await pickupRequestService.getActivePickupRequests()
+      
+      // Filter for requests that are truly active (pending, not assigned yet)
+      const activeRequests = data.filter(req => 
+        req.status === 'pending' && 
+        new Date(req.bidding_ends_at) > new Date()
+      )
+      
+      console.log('Active pickup requests for vendors:', activeRequests.length)
+      setPickupRequests(activeRequests)
     } catch (error) {
       console.error("Error fetching pickup requests:", error)
       setPickupRequests([])
@@ -216,7 +221,17 @@ export function VendorDashboard() {
           variant: "destructive",
         })
       } else {
-        setCitizenRequests(data || [])
+        setCitizenRequests(data ? data.map(request => ({
+          ...request,
+          citizen_name: request.citizen_name || 'Unknown Citizen',
+          contact_number: request.contact_number || 'Unknown',
+          address: request.address || 'Unknown',
+          size_category: request.size_category || 'Unknown',
+          approx_weight: request.approx_weight || 0,
+          waste_image: request.waste_image || undefined,
+          description: request.description || '',
+          vendor_contact: request.vendor_contact || ''
+        })) : [])
       }
     } catch (error) {
       console.error("Error fetching citizen pickup requests:", error)
@@ -345,7 +360,12 @@ export function VendorDashboard() {
 
     setSubmittingBid(true)
     try {
-      const vendorId = user?.username || user?.attributes?.email
+      if (!user?.email) {
+        console.error('User email not found')
+        return
+      }
+      
+      const vendorId = user.email
       await createBid({
         request_id: selectedRequest.request_id,
         vendor_id: vendorId,
@@ -511,8 +531,12 @@ export function VendorDashboard() {
           </Alert>
         )}
 
-        <Tabs defaultValue="citizen-requests" className="space-y-4">
+        <Tabs defaultValue="industry-bidding" className="space-y-4">
           <TabsList>
+            <TabsTrigger value="industry-bidding">
+              Industry Bidding{" "}
+              <Badge className="ml-2 bg-green-500 text-white">Live</Badge>
+            </TabsTrigger>
             <TabsTrigger value="citizen-requests">
               Citizen Requests{" "}
               {citizenRequests.length > 0 && (
@@ -529,6 +553,10 @@ export function VendorDashboard() {
             <TabsTrigger value="assigned">My Jobs</TabsTrigger>
             <TabsTrigger value="completed">Completed</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="industry-bidding" className="space-y-4">
+            <VendorBidding />
+          </TabsContent>
 
           <TabsContent value="citizen-requests" className="space-y-4">
             <div className="flex justify-between items-center">

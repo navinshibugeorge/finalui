@@ -61,6 +61,20 @@ CREATE TABLE vendor_waste_types (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Vendor bids table
+CREATE TABLE vendor_bids (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    request_id UUID REFERENCES pickup_requests(request_id),
+    vendor_id UUID REFERENCES vendors(vendor_id),
+    vendor_name TEXT NOT NULL,
+    vendor_email TEXT,
+    vendor_contact TEXT,
+    bid_amount DECIMAL(10,2) NOT NULL,
+    status TEXT DEFAULT 'active' CHECK (status IN ('active', 'won', 'lost')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Factories/Industries table
 CREATE TABLE factories (
     factory_id UUID REFERENCES auth.users(id) PRIMARY KEY,
@@ -141,6 +155,11 @@ CREATE INDEX idx_bins_factory_id ON bins(factory_id);
 CREATE INDEX idx_bins_fill_level ON bins(fill_level);
 CREATE INDEX idx_transactions_vendor_id ON transactions(vendor_id);
 CREATE INDEX idx_transactions_pickup_timestamp ON transactions(pickup_timestamp);
+CREATE INDEX idx_vendor_bids_request_id ON vendor_bids(request_id);
+CREATE INDEX idx_vendor_bids_vendor_id ON vendor_bids(vendor_id);
+CREATE INDEX idx_vendor_bids_request_id ON vendor_bids(request_id);
+CREATE INDEX idx_vendor_bids_vendor_id ON vendor_bids(vendor_id);
+CREATE INDEX idx_vendor_bids_status ON vendor_bids(status);
 
 -- Row Level Security (RLS) policies
 -- Temporarily disabled RLS for development
@@ -148,6 +167,8 @@ CREATE INDEX idx_transactions_pickup_timestamp ON transactions(pickup_timestamp)
 -- ALTER TABLE citizens ENABLE ROW LEVEL SECURITY;
 -- ALTER TABLE vendors ENABLE ROW LEVEL SECURITY;
 -- ALTER TABLE vendor_waste_types ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE vendor_bids ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE vendor_bids ENABLE ROW LEVEL SECURITY;
 -- ALTER TABLE factories ENABLE ROW LEVEL SECURITY;
 -- ALTER TABLE bins ENABLE ROW LEVEL SECURITY;
 -- ALTER TABLE pickup_requests ENABLE ROW LEVEL SECURITY;
@@ -235,5 +256,10 @@ CREATE TRIGGER set_profile_registration_approval
 
 CREATE TRIGGER update_pickup_requests_updated_at 
     BEFORE UPDATE ON pickup_requests 
+    FOR EACH ROW 
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_vendor_bids_updated_at 
+    BEFORE UPDATE ON vendor_bids 
     FOR EACH ROW 
     EXECUTE FUNCTION update_updated_at_column();
