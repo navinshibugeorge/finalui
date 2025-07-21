@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Checkbox } from "@/components/ui/checkbox"
 import { useToast } from "@/hooks/use-toast"
 import { Loader2 } from "lucide-react"
 import { createAuthModalHelpers } from "@/lib/auth-helpers"
@@ -31,7 +32,8 @@ export function AuthModal({ open, mode, defaultRole, onClose, onModeChange }: Au
     role: defaultRole || "citizen",
     companyName: "",
     factoryType: "",
-    wasteTypes: [] as string[]
+    wasteTypes: [] as string[],
+    collectingWasteTypes: [] as string[]
   })
   const { toast } = useToast()
 
@@ -139,15 +141,48 @@ export function AuthModal({ open, mode, defaultRole, onClose, onModeChange }: Au
               </div>
 
               {formData.role === "vendor" && (
-                <div>
-                  <Label htmlFor="companyName">Company Name</Label>
-                  <Input
-                    id="companyName"
-                    value={formData.companyName}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, companyName: e.target.value }))}
-                    required
-                  />
-                </div>
+                <>
+                  <div>
+                    <Label htmlFor="companyName">Company Name</Label>
+                    <Input
+                      id="companyName"
+                      value={formData.companyName}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, companyName: e.target.value }))}
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Waste Types You Collect</Label>
+                    <div className="grid grid-cols-2 gap-3 mt-2">
+                      {["Plastic", "Organic", "Metal", "E-Waste", "Glass"].map((wasteType) => (
+                        <div key={wasteType} className="flex items-center space-x-2">
+                          <Checkbox
+                            id={wasteType}
+                            checked={formData.collectingWasteTypes.includes(wasteType)}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setFormData((prev) => ({
+                                  ...prev,
+                                  collectingWasteTypes: [...prev.collectingWasteTypes, wasteType]
+                                }))
+                              } else {
+                                setFormData((prev) => ({
+                                  ...prev,
+                                  collectingWasteTypes: prev.collectingWasteTypes.filter((type) => type !== wasteType)
+                                }))
+                              }
+                            }}
+                          />
+                          <Label htmlFor={wasteType} className="text-sm">{wasteType}</Label>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Select the types of waste your company specializes in collecting
+                    </p>
+                  </div>
+                </>
               )}
 
               <div>

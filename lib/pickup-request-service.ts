@@ -1,5 +1,4 @@
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
-import { biddingTimerService } from './bidding-timer-service'
 
 export interface PickupRequest {
   request_id: string
@@ -38,8 +37,13 @@ export const pickupRequestService = {
   async createPickupRequest(binData: any): Promise<PickupRequest> {
     const supabase = createClientComponentClient()
     
+    console.log('🔍 Creating pickup request with binData:', {
+      ...binData,
+      keys: Object.keys(binData)
+    })
+    
     // Use the factory_id from binData (should be the authenticated user's UUID)
-    const factoryId = binData.factory_id || binData.industry_id
+    const factoryId = binData.factory_id || binData.industry_id || binData.factoryId
     
     if (!factoryId) {
       throw new Error('Factory ID is required to create pickup request')
@@ -88,28 +92,50 @@ export const pickupRequestService = {
     }
     
     // Check if a request already exists for this factory and waste type
-    const { data: existingRequest } = await supabase
+    const { data: existingRequest, error: existingRequestError } = await supabase
       .from('pickup_requests')
       .select('*')
       .eq('factory_id', factoryId)
-      .eq('waste_type', binData.waste_type)
+      .eq('waste_type', binData.waste_type || binData.wasteType)
       .in('status', ['pending', 'assigned', 'bidding'])
-      .single()
+      .maybeSingle() // Use maybeSingle() instead of single() to avoid errors when no record found
+
+    // Only throw error if there's an actual database error (not "no rows" error)
+    if (existingRequestError && existingRequestError.code !== 'PGRST116') {
+      throw new Error(`Error checking existing requests: ${existingRequestError.message}`)
+    }
 
     if (existingRequest) {
       throw new Error('Pickup request already exists for this bin')
     }
 
+    // Calculate estimated quantity based on available data
+    let estimatedQuantity = 100 // Default fallback value in liters
+    
+    if (binData.volume && binData.fill_level) {
+      // Use actual volume and fill level
+      estimatedQuantity = Math.round((binData.volume * binData.fill_level) / 100)
+    } else if (binData.capacity && binData.fill_level) {
+      // Use capacity and fill level
+      estimatedQuantity = Math.round((binData.capacity * binData.fill_level) / 100)
+    } else if (binData.fill_level) {
+      // Estimate based on typical bin sizes (assume 500L capacity)
+      estimatedQuantity = Math.round((500 * binData.fill_level) / 100)
+    }
+    
+    // Ensure minimum quantity of 50L for pickup efficiency
+    estimatedQuantity = Math.max(50, estimatedQuantity)
+
     const pickupRequest = {
       user_type: 'industry',
       factory_id: factoryId,
-      factory_name: binData.industry_name,
-      factory_address: binData.location,
-      waste_type: binData.waste_type,
-      estimated_quantity: Math.round(binData.volume * 0.8), // Estimate based on fill level
+      factory_name: binData.industry_name || binData.industryName || 'Unknown Industry',
+      factory_address: binData.location || 'Unknown Location',
+      waste_type: binData.waste_type || binData.wasteType,
+      estimated_quantity: estimatedQuantity,
       status: 'pending',
       preferred_date: new Date().toISOString().split('T')[0],
-      description: `Automated pickup request for ${binData.waste_type} waste - ${binData.fill_level}% full (Bin: ${binData.bin_id})`
+      description: `Automated pickup request for ${binData.waste_type || binData.wasteType} waste - ${binData.fill_level || binData.fillLevel}% full (Bin: ${binData.bin_id || binData.binId})`
     }
 
     const { data, error } = await supabase
@@ -122,23 +148,23 @@ export const pickupRequestService = {
       throw new Error(`Failed to create pickup request: ${error.message}`)
     }
 
-    // Start 5-minute timer for this request
-    biddingTimerService.startTimer(data.request_id, 5 * 60 * 1000)
+    // Notify vendors who collect this type of waste
+    await this.notifyVendorsForPickupRequest(data.request_id, binData.waste_type)
 
     return {
       request_id: data.request_id,
-      bin_id: binData.bin_id,
+      bin_id: binData.bin_id || binData.binId,
       factory_id: factoryId,
-      factory_name: binData.industry_name,
-      factory_address: binData.location,
-      waste_type: binData.waste_type,
-      fill_level: binData.fill_level,
+      factory_name: binData.industry_name || binData.industryName || 'Unknown Industry',
+      factory_address: binData.location || 'Unknown Location',
+      waste_type: binData.waste_type || binData.wasteType,
+      fill_level: binData.fill_level || binData.fillLevel || 85,
       estimated_quantity: pickupRequest.estimated_quantity,
       status: 'bidding',
       created_at: data.created_at,
       bidding_ends_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
       coordinates: binData.coordinates || "11.9611, 89.5900",
-      industry_name: binData.industry_name,
+      industry_name: binData.industry_name || binData.industryName || 'Unknown Industry',
       industry_id: factoryId
     }
   },
@@ -191,6 +217,62 @@ export const pickupRequestService = {
       industry_id: item.factory_id,
       vendor_bids: item.vendor_bids || []
     }))
+  },
+
+  // Get vendors who collect specific waste type
+  async getVendorsForWasteType(wasteType: string): Promise<any[]> {
+    const supabase = createClientComponentClient()
+    
+    const { data, error } = await supabase
+      .from('vendors')
+      .select('*')
+      .contains('collecting_waste_types', [wasteType])
+      .eq('is_active', true)
+
+    if (error) {
+      console.error('Error fetching vendors for waste type:', error)
+      return []
+    }
+
+    return data || []
+  },
+
+  // Send notification to specific vendors for a pickup request
+  async notifyVendorsForPickupRequest(requestId: string, wasteType: string): Promise<void> {
+    const supabase = createClientComponentClient()
+    
+    // Map industry waste type to vendor waste type
+    const mappedWasteType = this.mapIndustryWasteTypeToVendorType(wasteType)
+    
+    // Get vendors who collect this waste type
+    const vendors = await this.getVendorsForWasteType(mappedWasteType)
+    
+    console.log(`Found ${vendors.length} vendors who collect ${mappedWasteType} waste (mapped from ${wasteType})`)
+    
+    // Here you would typically send notifications (email, SMS, push notifications)
+    // For now, we'll just log the vendors who should be notified
+    vendors.forEach(vendor => {
+      console.log(`Notifying vendor: ${vendor.name} (${vendor.email}) for ${mappedWasteType} pickup request ${requestId}`)
+    })
+    
+    // In a real implementation, you would send notifications here
+    // Example: Send email notifications, push notifications to mobile app, etc.
+  },
+
+  // Map industry waste types to vendor collecting waste types
+  mapIndustryWasteTypeToVendorType(industryWasteType: string): string {
+    const wasteTypeMap: { [key: string]: string } = {
+      'plastic': 'Plastic',
+      'organic': 'Organic', 
+      'metal': 'Metal',
+      'electronic': 'E-Waste',
+      'e-waste': 'E-Waste',
+      'glass': 'Glass',
+      'paper': 'Organic', // Assuming paper goes to organic processing
+      'mixed': 'Plastic' // Default to plastic for mixed waste
+    }
+    
+    return wasteTypeMap[industryWasteType.toLowerCase()] || industryWasteType
   },
 
   // Submit a bid for a pickup request

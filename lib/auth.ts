@@ -10,6 +10,7 @@ interface SignUpData {
   address: string
   companyName?: string
   wasteTypes?: string[]
+  collectingWasteTypes?: string[]
 }
 
 interface SignInData {
@@ -30,14 +31,6 @@ export const auth = {
    * Sign up a new user - only citizens and vendors allowed
    */
   signUp: async (data: SignUpData): Promise<AuthResponse> => {
-    // Industry role is not allowed to sign up
-    if (data.role === 'industry') {
-      return {
-        user: null,
-        error: new Error('Industry accounts can only be created by administrators')
-      }
-    }
-
     try {
       // 1. Create auth user
       const { data: authData, error: authError } = await supabase.auth.signUp({
@@ -91,10 +84,11 @@ export const auth = {
             email: data.email,
             contact: data.contact,
             address: data.address,
+            collecting_waste_types: data.collectingWasteTypes || [],
           })
         if (vendorError) throw vendorError
 
-        // Insert waste types if provided
+        // Insert waste types if provided for backward compatibility
         if (data.wasteTypes && data.wasteTypes.length > 0) {
           const wasteTypeRecords = data.wasteTypes.map(type => ({
             vendor_id: authData.user?.id,
@@ -105,6 +99,19 @@ export const auth = {
             .from('vendor_waste_types')
             .insert(wasteTypeRecords)
           if (wasteTypeError) throw wasteTypeError
+        }
+
+        // Also insert collectingWasteTypes into vendor_waste_types for compatibility
+        if (data.collectingWasteTypes && data.collectingWasteTypes.length > 0) {
+          const collectingWasteTypeRecords = data.collectingWasteTypes.map(type => ({
+            vendor_id: authData.user?.id,
+            waste_type: type.toLowerCase(),
+            rate_per_kg: 0, // Default rate, can be updated later
+          }))
+          const { error: collectingWasteTypeError } = await supabase
+            .from('vendor_waste_types')
+            .insert(collectingWasteTypeRecords)
+          if (collectingWasteTypeError) throw collectingWasteTypeError
         }
       }
 

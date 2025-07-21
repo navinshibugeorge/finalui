@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { AlertTriangle, Wifi, WifiOff, Zap, Shield } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 interface BinSensorData {
   binId: string
@@ -18,6 +19,7 @@ interface BinSensorData {
   signalStrength: number
   temperature: number
   lastUpdate: string
+  wasteType: string
 }
 
 interface IoTBinSimulatorProps {
@@ -35,6 +37,7 @@ export function IoTBinSimulator({ factoryId, onDataUpdate }: IoTBinSimulatorProp
     signalStrength: 75,
     temperature: 23.5,
     lastUpdate: new Date().toISOString(),
+    wasteType: 'plastic', // Default waste type
   })
   const [isTransmitting, setIsTransmitting] = useState(false)
   const { toast } = useToast()
@@ -130,22 +133,45 @@ export function IoTBinSimulator({ factoryId, onDataUpdate }: IoTBinSimulatorProp
   }
 
   const triggerVendorSelection = async (payload: any) => {
-    // Simulate AWS Lambda processing
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-
-    // Mock vendor selection results
-    const selectedVendors = [
-      { name: "EcoWaste Solutions", price: 45, distance: 2.3, rating: 4.8 },
-      { name: "Green Collectors", price: 48, distance: 1.8, rating: 4.6 },
-      { name: "Waste Warriors", price: 50, distance: 3.1, rating: 4.9 },
-    ]
-
-    toast({
-      title: "🎯 Vendors Selected",
-      description: `Top 3 vendors found. Pickup requests sent to ${selectedVendors[0].name} and others.`,
-    })
-
-    console.log("🤖 Vendor Selection Results:", selectedVendors)
+    try {
+      // Import and use the real vendor selection algorithm
+      const { vendorSelectionAlgorithm } = await import('@/lib/vendor-selection-algorithm')
+      
+      // Map the IoT payload to the format expected by vendor selection algorithm
+      const binData = {
+        binId: payload.deviceId,
+        factoryId: payload.location.factoryId,
+        wasteType: sensorData.wasteType, // Use the actual waste type from sensor data
+        fillLevel: payload.fillLevel,
+        location: `Factory ${payload.location.factoryId}`,
+        industryName: `Industry ${payload.location.factoryId}`
+      }
+      
+      console.log('🤖 Triggering real vendor selection algorithm with:', binData)
+      const vendorResults = await vendorSelectionAlgorithm.processBinAlert(binData)
+      
+      if (vendorResults.length > 0) {
+        toast({
+          title: "🎯 Vendors Found & Notified",
+          description: `${vendorResults.length} compatible vendors found and notified. Bidding window started!`,
+        })
+        
+        console.log("✅ Vendor Selection Results:", vendorResults)
+      } else {
+        toast({
+          title: "⚠️ No Vendors Found",
+          description: "No compatible vendors found for this waste type and location.",
+          variant: "destructive",
+        })
+      }
+    } catch (error: any) {
+      console.error('Vendor selection failed:', error)
+      toast({
+        title: "❌ Vendor Selection Failed",
+        description: error.message || "Failed to process vendor selection",
+        variant: "destructive",
+      })
+    }
   }
 
   const resetTamper = () => {
@@ -263,9 +289,40 @@ export function IoTBinSimulator({ factoryId, onDataUpdate }: IoTBinSimulatorProp
           </div>
         )}
 
+        {/* Device Configuration */}
+        <div className="space-y-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="text-sm font-medium text-blue-800 mb-2">📊 Bin Configuration</div>
+          
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="waste-type" className="text-xs">Waste Type</Label>
+              <Select 
+                value={sensorData.wasteType} 
+                onValueChange={(value) => setSensorData(prev => ({ ...prev, wasteType: value }))}
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="plastic">🔵 Plastic</SelectItem>
+                  <SelectItem value="organic">🟢 Organic</SelectItem>
+                  <SelectItem value="metal">⚫ Metal</SelectItem>
+                  <SelectItem value="electronic">🟡 E-Waste</SelectItem>
+                  <SelectItem value="glass">🔵 Glass</SelectItem>
+                  <SelectItem value="paper">🟤 Paper</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <div>
+              <Label className="text-xs">Device ID</Label>
+              <div className="text-xs text-gray-600 p-2 bg-white rounded border">{sensorData.binId}</div>
+            </div>
+          </div>
+        </div>
+
         {/* Device Info */}
         <div className="text-xs text-gray-500 space-y-1">
-          <div>Device ID: {sensorData.binId}</div>
           <div>Last Update: {new Date(sensorData.lastUpdate).toLocaleTimeString()}</div>
           <div>Status: {isActive ? "🟢 Online" : "🔴 Offline"}</div>
         </div>

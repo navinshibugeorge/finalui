@@ -36,6 +36,7 @@ import { DashboardLayout } from "@/components/dashboard-layout"
 import { useAuth } from "@/components/auth-provider"
 import { useToast } from "@/hooks/use-toast"
 import { pickupRequestService } from "@/lib/pickup-request-service"
+import { vendorSelectionAlgorithm } from "@/lib/vendor-selection-algorithm"
 
 export function IndustryDashboard() {
   const { user } = useAuth()
@@ -203,15 +204,26 @@ export function IndustryDashboard() {
 
       console.log('Creating pickup request for bin:', bin.bin_id, 'with factory_id:', bin.factory_id)
       
-      const newRequest = await pickupRequestService.createPickupRequest(bin)
+      // Use the vendor selection algorithm to process the bin alert
+      const vendorResults = await vendorSelectionAlgorithm.processBinAlert({
+        binId: bin.bin_id,
+        factoryId: bin.factory_id,
+        wasteType: bin.waste_type,
+        fillLevel: bin.fill_level,
+        location: bin.location,
+        industryName: bin.industry_name
+      })
       
-      // Update pickup requests state immediately
-      setPickupRequests(prev => [...prev, newRequest])
-      
+      // Show success message with vendor count
       toast({
         title: "Pickup Request Created",
-        description: `Automatic pickup request created for bin ${bin.bin_id} (${bin.fill_level}% full)`,
+        description: `Automatic pickup request created for bin ${bin.bin_id} (${bin.fill_level}% full). ${vendorResults.length} compatible vendors notified.`,
       })
+      
+      // Refresh pickup requests
+      if (user?.id) {
+        fetchIndustryPickupRequests()
+      }
     } catch (error: any) {
       if (error.message.includes('already exists')) {
         // If request already exists, just silently continue

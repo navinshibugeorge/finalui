@@ -9,6 +9,7 @@ interface SignUpData {
   address: string
   companyName?: string
   wasteTypes?: string[]
+  collectingWasteTypes?: string[]
 }
 
 export function createAuthModalHelpers(
@@ -79,6 +80,7 @@ export function createAuthModalHelpers(
         address: formData.address,
         companyName: formData.role === "vendor" ? formData.companyName : undefined,
         wasteTypes: formData.role === "vendor" ? [] : undefined,
+        collectingWasteTypes: formData.role === "vendor" ? formData.collectingWasteTypes : undefined,
       }
 
       const result = await auth.signUp(signUpData)

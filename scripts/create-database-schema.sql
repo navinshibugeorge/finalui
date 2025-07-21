@@ -45,6 +45,7 @@ CREATE TABLE vendors (
     email TEXT NOT NULL,
     contact TEXT NOT NULL,
     address TEXT NOT NULL,
+    collecting_waste_types TEXT[] DEFAULT '{}',
     service_radius DECIMAL(5,2) DEFAULT 10,
     rating DECIMAL(3,2) DEFAULT 0,
     total_pickups INTEGER DEFAULT 0,
