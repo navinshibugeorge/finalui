@@ -236,23 +236,36 @@ export function VendorDashboard() {
       setTimers((prevTimers) => {
         const newTimers = { ...prevTimers }
         let hasChanges = false
+        const expiredRequestIds: string[] = []
 
         Object.keys(newTimers).forEach((requestId) => {
           if (newTimers[requestId] > 0) {
             newTimers[requestId] -= 1
             hasChanges = true
           } else if (newTimers[requestId] === 0) {
-            // Timer expired, remove from active requests
-            setActiveRequests((prev) =>
-              prev.filter((req) => req.request_id !== requestId)
-            )
+            // Mark timer as expired but don't call toast here
+            expiredRequestIds.push(requestId)
+            newTimers[requestId] = -1 // Mark as expired
+            hasChanges = true
+          }
+        })
+
+        // Handle expired timers outside of state update
+        if (expiredRequestIds.length > 0) {
+          setTimeout(() => {
+            expiredRequestIds.forEach((requestId) => {
+              setActiveRequests((prev) =>
+                prev.filter((req) => req.request_id !== requestId)
+              )
+            })
+            
             toast({
               title: "Bidding Closed",
               description: "The bidding window for a request has ended.",
               variant: "destructive",
             })
-          }
-        })
+          }, 0)
+        }
 
         return hasChanges ? newTimers : prevTimers
       })

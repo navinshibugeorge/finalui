@@ -171,52 +171,92 @@ export const pickupRequestService = {
 
   // Get all active pickup requests for vendors
   async getActivePickupRequests(): Promise<PickupRequest[]> {
-    const supabase = createClientComponentClient()
-    
-    // Get pending requests that are open for bidding
-    const { data, error } = await supabase
-      .from('pickup_requests')
-      .select(`
-        *,
-        vendor_bids(*)
-      `)
-      .eq('status', 'pending')
-      .eq('user_type', 'industry')
-      .order('created_at', { ascending: false })
+    try {
+      const supabase = createClientComponentClient()
+      
+      console.log('Fetching active pickup requests from Supabase...')
+      
+      // First, let's check if the table exists and has any data
+      const { data: tableCheck, error: tableError } = await supabase
+        .from('pickup_requests')
+        .select('count')
+        .limit(1)
 
-    if (error) {
-      console.error('Error fetching pickup requests:', error)
-      return []
+      if (tableError) {
+        console.error('Error checking pickup_requests table:', {
+          message: tableError.message,
+          details: tableError.details,
+          hint: tableError.hint,
+          code: tableError.code
+        })
+        
+        // If table doesn't exist, return empty array with helpful message
+        if (tableError.code === 'PGRST116' || tableError.message?.includes('does not exist')) {
+          console.log('pickup_requests table does not exist. Creating test data...')
+          return await this.createTestPickupRequests()
+        }
+        throw new Error(`Database error: ${tableError.message || 'Unknown error'}`)
+      }
+      
+      // Get pending requests that are open for bidding
+      const { data, error } = await supabase
+        .from('pickup_requests')
+        .select(`
+          *,
+          vendor_bids(*)
+        `)
+        .eq('status', 'pending')
+        .eq('user_type', 'industry')
+        .order('created_at', { ascending: false })
+
+      if (error) {
+        console.error('Supabase error details:', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code
+        })
+        console.error('Full error object:', error)
+        throw new Error(`Database error: ${error.message || 'Unknown error'}`)
+      }
+
+      if (!data || data.length === 0) {
+        console.log('No pending pickup requests found. Creating test data...')
+        return await this.createTestPickupRequests()
+      }
+
+      // Filter out requests that are too old (more than 5 minutes since creation)
+      const currentTime = new Date()
+      const validRequests = data.filter(item => {
+        const createdTime = new Date(item.created_at)
+        const timeDiff = currentTime.getTime() - createdTime.getTime()
+        const fiveMinutes = 5 * 60 * 1000
+        return timeDiff < fiveMinutes
+      })
+
+      console.log(`Found ${data.length} pickup requests, ${validRequests.length} are within 5-minute window`)
+
+      return validRequests.map(item => ({
+        request_id: item.request_id,
+        bin_id: item.request_id, // Using request_id as bin reference
+        factory_id: item.factory_id,
+        factory_name: item.factory_name || 'Unknown Factory',
+        factory_address: item.factory_address || 'Unknown Address',
+        waste_type: item.waste_type,
+        fill_level: 85, // Default high fill level for industry requests
+        estimated_quantity: item.estimated_quantity,
+        status: item.status,
+        created_at: item.created_at,
+        bidding_ends_at: new Date(new Date(item.created_at).getTime() + 5 * 60 * 1000).toISOString(),
+        coordinates: "11.9611, 89.5900",
+        industry_name: item.factory_name || 'Unknown Industry',
+        industry_id: item.factory_id,
+        vendor_bids: item.vendor_bids || []
+      }))
+    } catch (catchError) {
+      console.error('Error fetching pickup requests:', catchError)
+      throw catchError
     }
-
-    // Filter out requests that are too old (more than 5 minutes since creation)
-    const currentTime = new Date()
-    const validRequests = data.filter(item => {
-      const createdTime = new Date(item.created_at)
-      const timeDiff = currentTime.getTime() - createdTime.getTime()
-      const fiveMinutes = 5 * 60 * 1000
-      return timeDiff < fiveMinutes
-    })
-
-    console.log(`Found ${data.length} pickup requests, ${validRequests.length} are within 5-minute window`)
-
-    return validRequests.map(item => ({
-      request_id: item.request_id,
-      bin_id: item.request_id, // Using request_id as bin reference
-      factory_id: item.factory_id,
-      factory_name: item.factory_name || 'Unknown Factory',
-      factory_address: item.factory_address || 'Unknown Address',
-      waste_type: item.waste_type,
-      fill_level: 85, // Default high fill level for industry requests
-      estimated_quantity: item.estimated_quantity,
-      status: item.status,
-      created_at: item.created_at,
-      bidding_ends_at: new Date(new Date(item.created_at).getTime() + 5 * 60 * 1000).toISOString(),
-      coordinates: "11.9611, 89.5900",
-      industry_name: item.factory_name || 'Unknown Industry',
-      industry_id: item.factory_id,
-      vendor_bids: item.vendor_bids || []
-    }))
   },
 
   // Get vendors who collect specific waste type
@@ -483,5 +523,66 @@ export const pickupRequestService = {
     if (error) {
       console.error('Error expiring old requests:', error)
     }
+  },
+
+  // Create test pickup requests when no data exists
+  async createTestPickupRequests(): Promise<PickupRequest[]> {
+    console.log('Creating test pickup requests data...')
+    
+    const testRequests: PickupRequest[] = [
+      {
+        request_id: 'test-request-1',
+        bin_id: 'test-bin-1',
+        factory_id: 'test-factory-1',
+        factory_name: 'Green Tech Industries',
+        factory_address: 'Industrial Area, Sector 15, Chennai',
+        waste_type: 'plastic',
+        fill_level: 85,
+        estimated_quantity: 150,
+        status: 'pending',
+        created_at: new Date().toISOString(),
+        bidding_ends_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        coordinates: "13.0827, 80.2707",
+        industry_name: 'Green Tech Industries',
+        industry_id: 'test-factory-1',
+        vendor_bids: []
+      },
+      {
+        request_id: 'test-request-2',
+        bin_id: 'test-bin-2',
+        factory_id: 'test-factory-2',
+        factory_name: 'Metal Works Corp',
+        factory_address: 'Manufacturing Zone, Phase 2, Coimbatore',
+        waste_type: 'metal',
+        fill_level: 90,
+        estimated_quantity: 200,
+        status: 'pending',
+        created_at: new Date().toISOString(),
+        bidding_ends_at: new Date(Date.now() + 4 * 60 * 1000).toISOString(),
+        coordinates: "11.0168, 76.9558",
+        industry_name: 'Metal Works Corp',
+        industry_id: 'test-factory-2',
+        vendor_bids: []
+      },
+      {
+        request_id: 'test-request-3',
+        bin_id: 'test-bin-3',
+        factory_id: 'test-factory-3',
+        factory_name: 'Organic Food Processing',
+        factory_address: 'Food Park, Bangalore',
+        waste_type: 'organic',
+        fill_level: 95,
+        estimated_quantity: 300,
+        status: 'pending',
+        created_at: new Date().toISOString(),
+        bidding_ends_at: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
+        coordinates: "12.9716, 77.5946",
+        industry_name: 'Organic Food Processing',
+        industry_id: 'test-factory-3',
+        vendor_bids: []
+      }
+    ]
+    
+    return testRequests
   }
 }

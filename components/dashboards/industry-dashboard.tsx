@@ -47,7 +47,13 @@ export function IndustryDashboard() {
   const [selectedBin, setSelectedBin] = useState<any>(null)
   const [showBinModal, setShowBinModal] = useState(false)
   const [processingRequests, setProcessingRequests] = useState<Set<string>>(new Set())
-  const [requestedBins, setRequestedBins] = useState<Set<string>>(new Set()) // Track bins that already have requests
+  
+  // Track bins that have already triggered 80% notifications in this session
+  // This persists until page refresh, preventing duplicate notifications
+  const [notifiedBins, setNotifiedBins] = useState<Set<string>>(new Set())
+  
+  // Keep track of bins that currently have active pickup requests
+  const [binsWithActiveRequests, setBinsWithActiveRequests] = useState<Set<string>>(new Set())
 
   // API endpoints for individual bins
   const BIN_ENDPOINTS = [
@@ -110,9 +116,6 @@ export function IndustryDashboard() {
       
       setBins(validBins)
       
-      // Reset tracking for bins that went below 80%
-      resetBinTracking(validBins)
-      
       // Check for bins above 80% and create pickup requests
       const highFillBins = validBins.filter(bin => bin.fill_level >= 80)
       
@@ -120,26 +123,40 @@ export function IndustryDashboard() {
       const existingRequests = pickupRequests.filter(req => 
         req.status === 'pending' || req.status === 'assigned' || req.status === 'bidding'
       )
-      const binsWithActiveRequests = new Set(existingRequests.map(req => req.waste_type))
+      const binsWithActiveRequestsByType = new Set(existingRequests.map(req => req.waste_type))
+      
+      // Update the state for bins with active requests
+      setBinsWithActiveRequests(binsWithActiveRequestsByType)
       
       console.log('High fill bins:', highFillBins.length)
       console.log('Existing active requests:', existingRequests.length)
-      console.log('Bins with active requests:', Array.from(binsWithActiveRequests))
-      console.log('Requested bins tracker:', Array.from(requestedBins))
+      console.log('Bins with active requests:', Array.from(binsWithActiveRequestsByType))
+      console.log('Previously notified bins:', Array.from(notifiedBins))
       
       for (const bin of highFillBins) {
         const binKey = `${bin.waste_type}_${bin.bin_id}`
+        
+        // Only create request if:
+        // 1. Not currently processing this bin
+        // 2. Haven't notified for this bin in current session (until page refresh)
+        // 3. No active request exists for this waste type
+        // 4. User is authenticated
         const shouldCreateRequest = !processingRequests.has(bin.bin_id) && 
-                                  !requestedBins.has(binKey) && 
-                                  !binsWithActiveRequests.has(bin.waste_type) && 
+                                  !notifiedBins.has(binKey) && 
+                                  !binsWithActiveRequestsByType.has(bin.waste_type) && 
                                   user?.id
         
         console.log(`Bin ${bin.bin_id} (${bin.waste_type}): shouldCreateRequest=${shouldCreateRequest}`)
+        console.log(`  - Processing: ${processingRequests.has(bin.bin_id)}`)
+        console.log(`  - Already notified: ${notifiedBins.has(binKey)}`)
+        console.log(`  - Has active request: ${binsWithActiveRequestsByType.has(bin.waste_type)}`)
         
         if (shouldCreateRequest) {
-          console.log(`Creating pickup request for bin ${bin.bin_id}`)
-          // Mark this bin as having a request to prevent duplicates
-          setRequestedBins(prev => new Set(prev).add(binKey))
+          console.log(`Creating pickup request for bin ${bin.bin_id} - first time reaching 80% in this session`)
+          
+          // Mark this bin as notified for the current session
+          setNotifiedBins(prev => new Set(prev).add(binKey))
+          
           createPickupRequestForBin(bin)
         }
       }
@@ -236,13 +253,9 @@ export function IndustryDashboard() {
           variant: "destructive",
         })
         
-        // Remove from requested bins if failed to create
-        const binKey = `${bin.waste_type}_${bin.bin_id}`
-        setRequestedBins(prev => {
-          const newSet = new Set(prev)
-          newSet.delete(binKey)
-          return newSet
-        })
+        // Don't remove from notifiedBins on error - keep session-based tracking
+        // The bin will remain marked as notified until page refresh
+        console.log(`Keeping bin ${bin.bin_id} marked as notified despite error`)
       }
     } finally {
       setProcessingRequests(prev => {
@@ -261,39 +274,15 @@ export function IndustryDashboard() {
       const requests = await pickupRequestService.getIndustryPickupRequests(user.id)
       setPickupRequests(requests)
       
-      // Clean up requestedBins for completed/cancelled requests
+      // Update bins with active requests for status tracking
       const activeRequests = requests.filter(req => 
         req.status === 'pending' || req.status === 'assigned' || req.status === 'bidding'
       )
       const activeWasteTypes = new Set(activeRequests.map(req => req.waste_type))
+      setBinsWithActiveRequests(activeWasteTypes)
       
-      setRequestedBins(prev => {
-        const newSet = new Set<string>()
-        prev.forEach(binKey => {
-          const wasteType = binKey.split('_')[0]
-          if (activeWasteTypes.has(wasteType)) {
-            newSet.add(binKey)
-          }
-        })
-        return newSet
-      })
     } catch (error) {
       console.error('Error fetching pickup requests:', error)
-    }
-  }
-
-  // Reset tracking for bins that go below 80%
-  const resetBinTracking = (validBins: any[]) => {
-    const binsBelow80 = validBins.filter(bin => bin.fill_level < 80)
-    if (binsBelow80.length > 0) {
-      setRequestedBins(prev => {
-        const newSet = new Set(prev)
-        binsBelow80.forEach(bin => {
-          const binKey = `${bin.waste_type}_${bin.bin_id}`
-          newSet.delete(binKey)
-        })
-        return newSet
-      })
     }
   }
 
@@ -462,6 +451,18 @@ export function IndustryDashboard() {
           </Alert>
         )}
 
+        {/* High Fill Level Info */}
+        {highFillBins.length > 0 && (
+          <Alert className="border-blue-200 bg-blue-50">
+            <Bell className="h-4 w-4 text-blue-600" />
+            <AlertDescription className="text-blue-800">
+              <strong>{highFillBins.length} bin(s)</strong> have reached 80%+ capacity. 
+              Pickup requests are sent automatically <strong>once per session</strong> when bins first reach 80%. 
+              Refresh the page to allow notifications again.
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Hazardous Waste Alert */}
         {bins.filter(bin => bin.waste_quality === 'hazardous').length > 0 && (
           <Alert className="border-orange-200 bg-orange-50">
@@ -470,6 +471,79 @@ export function IndustryDashboard() {
               <strong>{bins.filter(bin => bin.waste_quality === 'hazardous').length} bin(s)</strong> contain hazardous waste requiring special handling.
             </AlertDescription>
           </Alert>
+        )}        {/* Session Tracking Debug Info */}
+        {process.env.NODE_ENV === 'development' && (
+          <Card className="border-blue-200 bg-blue-50">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                🔧 Session Tracking Debug
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="font-medium">Bins Notified This Session</p>
+                  <p className="text-muted-foreground">
+                    {notifiedBins.size > 0 ? Array.from(notifiedBins).join(', ') : 'None'}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    These bins have triggered 80% notifications and won't send again until page refresh
+                  </p>
+                </div>
+                <div>
+                  <p className="font-medium">Bins with Active Requests</p>
+                  <p className="text-muted-foreground">
+                    {binsWithActiveRequests.size > 0 ? Array.from(binsWithActiveRequests).join(', ') : 'None'}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Waste types that currently have pending/assigned requests
+                  </p>
+                </div>
+                <div>
+                  <p className="font-medium">High Fill Bins (≥80%)</p>
+                  <p className="text-muted-foreground">
+                    {highFillBins.map(bin => `${bin.bin_id} (${bin.fill_level}%)`).join(', ') || 'None'}
+                  </p>
+                </div>
+                <div>
+                  <p className="font-medium">Currently Processing</p>
+                  <p className="text-muted-foreground">
+                    {processingRequests.size > 0 ? Array.from(processingRequests).join(', ') : 'None'}
+                  </p>
+                </div>
+              </div>
+              
+              <div className="flex gap-2">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => {
+                    console.log('=== SESSION TRACKING DEBUG ===')
+                    console.log('Notified bins:', Array.from(notifiedBins))
+                    console.log('Bins with active requests:', Array.from(binsWithActiveRequests))
+                    console.log('High fill bins:', highFillBins.map(b => `${b.bin_id}: ${b.fill_level}%`))
+                    console.log('Currently processing:', Array.from(processingRequests))
+                  }}
+                >
+                  Log Debug Info
+                </Button>
+                
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => {
+                    setNotifiedBins(new Set())
+                    toast({
+                      title: "Session Reset",
+                      description: "Cleared notified bins tracking. Bins ≥80% can now trigger notifications again.",
+                    })
+                  }}
+                >
+                  Reset Session Tracking
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         )}
 
         <Tabs defaultValue="overview" className="space-y-4">
@@ -576,12 +650,27 @@ export function IndustryDashboard() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge className={getStatusColor(bin.status)}>
-                            <div className="flex items-center gap-1">
-                              {getStatusIcon(bin.status)}
-                              {bin.status.toUpperCase()}
-                            </div>
-                          </Badge>
+                          <div className="flex items-center gap-2">
+                            <Badge className={getStatusColor(bin.status)}>
+                              <div className="flex items-center gap-1">
+                                {getStatusIcon(bin.status)}
+                                {bin.status.toUpperCase()}
+                              </div>
+                            </Badge>
+                            {/* Show notification status for bins ≥80% */}
+                            {bin.fill_level >= 80 && (
+                              <Badge 
+                                variant={notifiedBins.has(`${bin.waste_type}_${bin.bin_id}`) ? "default" : "secondary"}
+                                className={notifiedBins.has(`${bin.waste_type}_${bin.bin_id}`) 
+                                  ? "bg-blue-100 text-blue-800" 
+                                  : "bg-orange-100 text-orange-800"}
+                              >
+                                {notifiedBins.has(`${bin.waste_type}_${bin.bin_id}`) 
+                                  ? "Notified" 
+                                  : "Ready to Notify"}
+                              </Badge>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell>{bin.location}</TableCell>
                         <TableCell>{new Date(bin.last_updated).toLocaleString()}</TableCell>
