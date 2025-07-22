@@ -1,5 +1,8 @@
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 
+// Initialize Supabase client for helper functions
+const supabase = createClientComponentClient()
+
 export interface PickupRequest {
   request_id: string
   bin_id: string
@@ -18,6 +21,9 @@ export interface PickupRequest {
   industry_name: string
   industry_id: string
   vendor_bids?: VendorBid[]
+  base_bid?: number
+  current_highest_bid?: number
+  total_bids?: number
 }
 
 export interface VendorBid {
@@ -30,6 +36,44 @@ export interface VendorBid {
   bid_amount: number
   created_at: string
   status: 'active' | 'won' | 'lost'
+  message?: string
+}
+
+// Market rates per kg for different waste types (in INR)
+export const WASTE_MARKET_RATES = {
+  plastic: 25,     // ₹25/kg
+  metal: 45,       // ₹45/kg  
+  glass: 8,        // ₹8/kg
+  paper: 12,       // ₹12/kg
+  organic: 5,      // ₹5/kg
+  electronic: 180, // ₹180/kg
+  'e-waste': 180,  // ₹180/kg
+  mixed: 15        // ₹15/kg average
+}
+
+// Calculate base bid amount based on waste type and quantity
+export function calculateBaseBid(wasteType: string, quantityLiters: number): number {
+  const wasteTypeKey = wasteType.toLowerCase() as keyof typeof WASTE_MARKET_RATES
+  const ratePerKg = WASTE_MARKET_RATES[wasteTypeKey] || WASTE_MARKET_RATES.mixed
+  
+  // Convert liters to approximate weight in kg (density varies by waste type)
+  const densityMap = {
+    plastic: 0.3,     // 0.3 kg/L
+    metal: 2.5,       // 2.5 kg/L
+    glass: 1.5,       // 1.5 kg/L
+    paper: 0.4,       // 0.4 kg/L
+    organic: 0.8,     // 0.8 kg/L
+    electronic: 1.2,  // 1.2 kg/L
+    'e-waste': 1.2,   // 1.2 kg/L
+    mixed: 0.6        // 0.6 kg/L average
+  }
+  
+  const density = densityMap[wasteTypeKey] || densityMap.mixed
+  const weightKg = quantityLiters * density
+  const baseBid = Math.round(weightKg * ratePerKg)
+  
+  // Add 20% margin for pickup service
+  return Math.round(baseBid * 1.2)
 }
 
 export const pickupRequestService = {
@@ -125,6 +169,9 @@ export const pickupRequestService = {
     
     // Ensure minimum quantity of 50L for pickup efficiency
     estimatedQuantity = Math.max(50, estimatedQuantity)
+    
+    // Calculate base bid amount based on market rates
+    const baseBid = calculateBaseBid(binData.waste_type || binData.wasteType, estimatedQuantity)
 
     const pickupRequest = {
       user_type: 'industry',
@@ -135,7 +182,8 @@ export const pickupRequestService = {
       estimated_quantity: estimatedQuantity,
       status: 'pending',
       preferred_date: new Date().toISOString().split('T')[0],
-      description: `Automated pickup request for ${binData.waste_type || binData.wasteType} waste - ${binData.fill_level || binData.fillLevel}% full (Bin: ${binData.bin_id || binData.binId})`
+      description: `Automated pickup request for ${binData.waste_type || binData.wasteType} waste - ${binData.fill_level || binData.fillLevel}% full (Bin: ${binData.bin_id || binData.binId})`,
+      estimated_price: baseBid // Base bid amount
     }
 
     const { data, error } = await supabase
@@ -236,23 +284,38 @@ export const pickupRequestService = {
 
       console.log(`Found ${data.length} pickup requests, ${validRequests.length} are within 5-minute window`)
 
-      return validRequests.map(item => ({
-        request_id: item.request_id,
-        bin_id: item.request_id, // Using request_id as bin reference
-        factory_id: item.factory_id,
-        factory_name: item.factory_name || 'Unknown Factory',
-        factory_address: item.factory_address || 'Unknown Address',
-        waste_type: item.waste_type,
-        fill_level: 85, // Default high fill level for industry requests
-        estimated_quantity: item.estimated_quantity,
-        status: item.status,
-        created_at: item.created_at,
-        bidding_ends_at: new Date(new Date(item.created_at).getTime() + 5 * 60 * 1000).toISOString(),
-        coordinates: "11.9611, 89.5900",
-        industry_name: item.factory_name || 'Unknown Industry',
-        industry_id: item.factory_id,
-        vendor_bids: item.vendor_bids || []
-      }))
+      return validRequests.map(item => {
+        // Calculate highest bid and bid count from vendor_bids
+        const activeBids = (item.vendor_bids || []).filter((bid: any) => bid.status === 'active')
+        const highestBid = activeBids.length > 0 
+          ? Math.max(...activeBids.map((bid: any) => bid.bid_amount))
+          : 0
+        
+        // Calculate base bid for this request
+        const baseBid = item.estimated_price || calculateBaseBid(item.waste_type, item.estimated_quantity)
+        
+        return {
+          request_id: item.request_id,
+          bin_id: item.request_id, // Using request_id as bin reference
+          factory_id: item.factory_id,
+          factory_name: item.factory_name || 'Unknown Factory',
+          factory_address: item.factory_address || 'Unknown Address',
+          waste_type: item.waste_type,
+          fill_level: 85, // Default high fill level for industry requests
+          estimated_quantity: item.estimated_quantity,
+          status: item.status,
+          created_at: item.created_at,
+          bidding_ends_at: new Date(new Date(item.created_at).getTime() + 5 * 60 * 1000).toISOString(),
+          coordinates: "11.9611, 89.5900",
+          industry_name: item.factory_name || 'Unknown Industry',
+          industry_id: item.factory_id,
+          vendor_bids: activeBids,
+          base_bid: baseBid,
+          current_highest_bid: highestBid,
+          total_bids: activeBids.length,
+          winning_bid: highestBid > 0 ? highestBid : undefined
+        }
+      })
     } catch (catchError) {
       console.error('Error fetching pickup requests:', catchError)
       throw catchError
@@ -424,6 +487,178 @@ export const pickupRequestService = {
     }))
   },
 
+  // Place or update a bid for a pickup request
+  async placeBid(requestId: string, vendorId: string, bidAmount: number, message?: string): Promise<VendorBid> {
+    const supabase = createClientComponentClient()
+    
+    // First, get the pickup request to validate bidding window and get current highest bid
+    const { data: pickupRequest, error: requestError } = await supabase
+      .from('pickup_requests')
+      .select('*, vendor_bids(*)')
+      .eq('request_id', requestId)
+      .eq('status', 'pending')
+      .single()
+
+    if (requestError || !pickupRequest) {
+      throw new Error('Pickup request not found or bidding closed')
+    }
+
+    // Check if bidding window is still open (5 minutes from creation)
+    const createdTime = new Date(pickupRequest.created_at).getTime()
+    const currentTime = Date.now()
+    const fiveMinutes = 5 * 60 * 1000
+    
+    if (currentTime - createdTime > fiveMinutes) {
+      throw new Error('Bidding window has closed')
+    }
+
+    // Get current highest bid
+    const activeBids = pickupRequest.vendor_bids?.filter((bid: any) => bid.status === 'active') || []
+    const currentHighestBid = activeBids.length > 0 
+      ? Math.max(...activeBids.map((bid: any) => bid.bid_amount))
+      : 0
+    
+    // Calculate minimum bid (base bid or current highest + ₹10)
+    const baseBid = pickupRequest.estimated_price || calculateBaseBid(pickupRequest.waste_type, pickupRequest.estimated_quantity)
+    const minimumBid = Math.max(baseBid, currentHighestBid + 10)
+    
+    if (bidAmount < minimumBid) {
+      throw new Error(`Bid must be at least ₹${minimumBid} (Current highest: ₹${currentHighestBid}, Base: ₹${baseBid})`)
+    }
+
+    // Get vendor details
+    const { data: vendor } = await supabase
+      .from('vendors')
+      .select('*')
+      .eq('vendor_id', vendorId)
+      .single()
+
+    if (!vendor) {
+      throw new Error('Vendor not found')
+    }
+
+    // Check if vendor already has a bid for this request
+    const existingBid = activeBids.find((bid: any) => bid.vendor_id === vendorId)
+
+    if (existingBid) {
+      // Update existing bid
+      const { data, error } = await supabase
+        .from('vendor_bids')
+        .update({ 
+          bid_amount: bidAmount,
+          created_at: new Date().toISOString(),
+          message: message || ''
+        })
+        .eq('id', existingBid.id)
+        .select()
+        .single()
+
+      if (error) {
+        throw new Error(`Failed to update bid: ${error.message}`)
+      }
+
+      return {
+        bid_id: data.id,
+        request_id: data.request_id,
+        vendor_id: data.vendor_id,
+        vendor_name: data.vendor_name,
+        vendor_email: data.vendor_email,
+        vendor_contact: data.vendor_contact,
+        bid_amount: data.bid_amount,
+        created_at: data.created_at,
+        status: data.status,
+        message: data.message
+      }
+    } else {
+      // Create new bid
+      const { data, error } = await supabase
+        .from('vendor_bids')
+        .insert({
+          request_id: requestId,
+          vendor_id: vendorId,
+          vendor_name: vendor.name,
+          vendor_email: vendor.email,
+          vendor_contact: vendor.contact,
+          bid_amount: bidAmount,
+          status: 'active',
+          message: message || ''
+        })
+        .select()
+        .single()
+
+      if (error) {
+        throw new Error(`Failed to place bid: ${error.message}`)
+      }
+
+      return {
+        bid_id: data.id,
+        request_id: data.request_id,
+        vendor_id: data.vendor_id,
+        vendor_name: data.vendor_name,
+        vendor_email: data.vendor_email,
+        vendor_contact: data.vendor_contact,
+        bid_amount: data.bid_amount,
+        created_at: data.created_at,
+        status: data.status,
+        message: data.message
+      }
+    }
+  },
+
+  // Get real-time bidding information for a specific request
+  async getBiddingInfo(requestId: string): Promise<{
+    request: PickupRequest | null,
+    activeBids: VendorBid[],
+    currentHighestBid: number,
+    totalBids: number,
+    timeRemaining: number
+  }> {
+    const supabase = createClientComponentClient()
+    
+    const { data: request, error } = await supabase
+      .from('pickup_requests')
+      .select(`
+        *,
+        vendor_bids(*)
+      `)
+      .eq('request_id', requestId)
+      .single()
+
+    if (error || !request) {
+      return {
+        request: null,
+        activeBids: [],
+        currentHighestBid: 0,
+        totalBids: 0,
+        timeRemaining: 0
+      }
+    }
+
+    const activeBids = (request.vendor_bids || [])
+      .filter((bid: any) => bid.status === 'active')
+      .sort((a: any, b: any) => b.bid_amount - a.bid_amount)
+
+    const currentHighestBid = activeBids.length > 0 ? activeBids[0].bid_amount : 0
+    const createdTime = new Date(request.created_at).getTime()
+    const currentTime = Date.now()
+    const fiveMinutes = 5 * 60 * 1000
+    const timeRemaining = Math.max(0, fiveMinutes - (currentTime - createdTime))
+
+    return {
+      request: {
+        ...request,
+        bidding_ends_at: new Date(createdTime + fiveMinutes).toISOString(),
+        current_highest_bid: currentHighestBid,
+        total_bids: activeBids.length,
+        base_bid: request.estimated_price || calculateBaseBid(request.waste_type, request.estimated_quantity)
+      },
+      activeBids,
+      currentHighestBid,
+      totalBids: activeBids.length,
+      timeRemaining: Math.floor(timeRemaining / 1000)
+    }
+  },
+
   // Select winning bid after 5 minutes
   async selectWinningBid(requestId: string): Promise<VendorBid | null> {
     const supabase = createClientComponentClient()
@@ -584,5 +819,94 @@ export const pickupRequestService = {
     ]
     
     return testRequests
+  }
+}
+
+// Helper function to select bid winner when timer expires
+export const selectBidWinner = async (requestId: string): Promise<boolean> => {
+  try {
+    // Get all bids for this request
+    const bids = await getBidsForRequest(requestId)
+    
+    if (bids.length === 0) {
+      console.log(`No bids found for request ${requestId}`)
+      return false
+    }
+    
+    // Find the highest bid
+    const winningBid = bids.reduce((highest, current) => 
+      current.bid_amount > highest.bid_amount ? current : highest
+    )
+    
+    // Get vendor details for the winner
+    const { data: vendorData, error: vendorError } = await supabase
+      .from('vendors')
+      .select('name, contact, company_name, address, email')
+      .eq('vendor_id', winningBid.vendor_id)
+      .single()
+    
+    if (vendorError) {
+      console.error('Error fetching vendor details:', vendorError)
+    }
+    
+    // Update the pickup request with winner and vendor details
+    const updateData: any = {
+      status: 'assigned',
+      assigned_vendor_id: winningBid.vendor_id,
+      winning_bid_amount: winningBid.bid_amount,
+      assigned_at: new Date().toISOString()
+    }
+    
+    // Add vendor details if available
+    if (vendorData) {
+      updateData.assigned_vendor_name = vendorData.name
+      updateData.assigned_vendor_contact = vendorData.contact
+      updateData.assigned_vendor_company = vendorData.company_name
+      updateData.assigned_vendor_address = vendorData.address
+      updateData.assigned_vendor_email = vendorData.email
+    }
+    
+    const { error: updateError } = await supabase
+      .from('pickup_requests')
+      .update(updateData)
+      .eq('request_id', requestId)
+    
+    if (updateError) {
+      throw updateError
+    }
+    
+    // Update the winning bid status
+    const { error: bidUpdateError } = await supabase
+      .from('vendor_bids')
+      .update({ is_winner: true })
+      .eq('bid_id', winningBid.bid_id)
+    
+    if (bidUpdateError) {
+      throw bidUpdateError
+    }
+    
+    console.log(`Winner selected for request ${requestId}: Vendor ${winningBid.vendor_id} (${vendorData?.name}) with bid ₹${winningBid.bid_amount}`)
+    return true
+    
+  } catch (error) {
+    console.error('Error selecting bid winner:', error)
+    return false
+  }
+}
+
+// Helper function to get all bids for a request
+export const getBidsForRequest = async (requestId: string) => {
+  try {
+    const { data, error } = await supabase
+      .from('vendor_bids')
+      .select('*')
+      .eq('request_id', requestId)
+      .order('bid_amount', { ascending: false })
+    
+    if (error) throw error
+    return data || []
+  } catch (error) {
+    console.error('Error fetching bids for request:', error)
+    return []
   }
 }

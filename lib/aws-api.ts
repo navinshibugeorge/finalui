@@ -490,28 +490,28 @@ export async function updateVendor(vendorId: string, updates: Partial<Vendor>) {
   }
 }
 
-// Mock implementation for createBid
+// Mock implementation for createBid - now using Supabase bidding system
 export async function createBid(bidData: {
   request_id: string
   vendor_id: string
   bid_amount: number
   message?: string
 }) {
-  await delay(300)
-
   try {
-    // In a real implementation, this would store the bid in a database
-    const bid = {
-      bid_id: generateId("bid"),
-      ...bidData,
-      created_at: new Date().toISOString(),
-      status: "pending",
-    }
+    const { pickupRequestService } = await import('./pickup-request-service')
+    
+    const bid = await pickupRequestService.placeBid(
+      bidData.request_id,
+      bidData.vendor_id,
+      bidData.bid_amount,
+      bidData.message
+    )
 
-    console.log("Bid created:", bid)
+    console.log("Bid placed successfully:", bid)
     return { data: bid, error: null }
-  } catch (error) {
-    return { data: null, error: "Failed to create bid" }
+  } catch (error: any) {
+    console.error("Failed to place bid:", error)
+    return { data: null, error: error.message || "Failed to create bid" }
   }
 }
 

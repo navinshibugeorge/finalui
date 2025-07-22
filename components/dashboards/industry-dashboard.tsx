@@ -842,10 +842,28 @@ export function IndustryDashboard() {
                           </TableCell>
                           <TableCell>
                             {winningBid ? (
-                              <div className="text-sm">
-                                <div className="font-medium">{winningBid.vendor_name}</div>
+                              <div className="text-sm space-y-1">
+                                <div className="font-medium">{request.assigned_vendor_name || winningBid.vendor_name}</div>
+                                {request.assigned_vendor_company && (
+                                  <div className="text-muted-foreground text-xs font-medium">
+                                    🏢 {request.assigned_vendor_company}
+                                  </div>
+                                )}
                                 <div className="text-muted-foreground text-xs">
-                                  {winningBid.vendor_contact}
+                                  📞 {request.assigned_vendor_contact || winningBid.vendor_contact}
+                                </div>
+                                {request.assigned_vendor_email && (
+                                  <div className="text-muted-foreground text-xs">
+                                    ✉️ {request.assigned_vendor_email}
+                                  </div>
+                                )}
+                                {request.assigned_vendor_address && (
+                                  <div className="text-muted-foreground text-xs">
+                                    📍 {request.assigned_vendor_address}
+                                  </div>
+                                )}
+                                <div className="text-green-600 text-xs font-medium mt-1">
+                                  💰 Winning Bid: ₹{request.winning_bid_amount || winningBid.bid_amount}
                                 </div>
                               </div>
                             ) : (
