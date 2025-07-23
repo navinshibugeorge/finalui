@@ -745,8 +745,8 @@ export function IndustryDashboard() {
                     {pickupRequests.map((request) => {
                       const bids = request.vendor_bids || []
                       const highestBid = bids.length > 0 ? Math.max(...bids.map((bid: any) => bid.bid_amount)) : 0
-                      const winningBid = bids.find((bid: any) => bid.is_winner === true) || 
-                                       (request.status === 'assigned' && bids.find((bid: any) => bid.vendor_id === (request.assigned_vendor_id || request.assigned_vendor)))
+                      const winningBid = bids.find((bid: any) => bid.status === 'won') || 
+                                       (request.status === 'assigned' && bids.find((bid: any) => bid.vendor_id === request.assigned_vendor))
                       
                       return (
                         <TableRow key={request.request_id}>
@@ -793,7 +793,7 @@ export function IndustryDashboard() {
                                   </div>
                                 )}
                                 <div className="text-green-600 text-xs font-medium mt-1">
-                                  💰 Winning Bid: ₹{request.winning_bid_amount || winningBid.bid_amount}
+                                  💰 Winning Bid: ₹{request.total_amount || winningBid.bid_amount}
                                 </div>
                               </div>
                             ) : (
@@ -801,9 +801,9 @@ export function IndustryDashboard() {
                             )}
                           </TableCell>
                           <TableCell>
-                            {(request.winning_bid_amount || winningBid?.bid_amount || request.total_amount) ? (
+                            {(request.total_amount || winningBid?.bid_amount || request.total_amount) ? (
                               <span className="font-medium text-green-600">
-                                ₹{request.winning_bid_amount || winningBid?.bid_amount || request.total_amount}
+                                ₹{request.total_amount || winningBid?.bid_amount || request.total_amount}
                               </span>
                             ) : highestBid > 0 ? (
                               <span className="font-medium text-orange-600">
@@ -911,8 +911,8 @@ export function IndustryDashboard() {
                       .filter(request => request.status === 'assigned' || request.status === 'completed')
                       .map((request) => {
                         const bids = request.vendor_bids || []
-                        const winningBid = bids.find((bid: any) => bid.is_winner === true) || 
-                                         (request.status === 'assigned' && bids.find((bid: any) => bid.vendor_id === (request.assigned_vendor_id || request.assigned_vendor)))
+                        const winningBid = bids.find((bid: any) => bid.status === 'won') || 
+                                         (request.status === 'assigned' && bids.find((bid: any) => bid.vendor_id === request.assigned_vendor))
                         
                         return (
                           <TableRow key={request.request_id}>
@@ -952,7 +952,7 @@ export function IndustryDashboard() {
                             </TableCell>
                             <TableCell>
                               <span className="text-green-600 font-bold">
-                                ₹{request.winning_bid_amount || winningBid?.bid_amount || request.base_bid}
+                                ₹{request.total_amount || winningBid?.bid_amount || request.base_bid}
                               </span>
                             </TableCell>
                             <TableCell>

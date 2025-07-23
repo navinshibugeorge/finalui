@@ -836,7 +836,7 @@ export const selectBidWinner = async (requestId: string): Promise<boolean> => {
     // Get vendor details for the winner
     const { data: vendorData, error: vendorError } = await supabase
       .from('vendors')
-      .select('name, contact, company_name, address, email')
+      .select('name, contact, address, email')
       .eq('vendor_id', winningBid.vendor_id)
       .single()
     
@@ -847,19 +847,17 @@ export const selectBidWinner = async (requestId: string): Promise<boolean> => {
     // Update the pickup request with winner and vendor details
     const updateData: any = {
       status: 'assigned',
-      assigned_vendor_id: winningBid.vendor_id,
-      winning_bid_amount: winningBid.bid_amount,
-      assigned_at: new Date().toISOString()
+      assigned_vendor: winningBid.vendor_id,
+      total_amount: winningBid.bid_amount
     }
     
-    // Add vendor details if available
-    if (vendorData) {
-      updateData.assigned_vendor_name = vendorData.name
-      updateData.assigned_vendor_contact = vendorData.contact
-      updateData.assigned_vendor_company = vendorData.company_name
-      updateData.assigned_vendor_address = vendorData.address
-      updateData.assigned_vendor_email = vendorData.email
-    }
+    // Add vendor details if available (commented out as these columns don't exist)
+    // if (vendorData) {
+    //   updateData.assigned_vendor_name = vendorData.name
+    //   updateData.assigned_vendor_contact = vendorData.contact
+    //   updateData.assigned_vendor_address = vendorData.address
+    //   updateData.assigned_vendor_email = vendorData.email
+    // }
     
     const { error: updateError } = await supabase
       .from('pickup_requests')
@@ -873,11 +871,22 @@ export const selectBidWinner = async (requestId: string): Promise<boolean> => {
     // Update the winning bid status
     const { error: bidUpdateError } = await supabase
       .from('vendor_bids')
-      .update({ is_winner: true })
-      .eq('bid_id', winningBid.bid_id)
+      .update({ status: 'won' })
+      .eq('id', winningBid.id)
     
     if (bidUpdateError) {
-      throw bidUpdateError
+      console.error('Error updating winning bid status:', bidUpdateError)
+    }
+    
+    // Update other bids to lost status
+    const { error: loseBidsError } = await supabase
+      .from('vendor_bids')
+      .update({ status: 'lost' })
+      .eq('request_id', requestId)
+      .neq('id', winningBid.id)
+    
+    if (loseBidsError) {
+      console.error('Error updating losing bid statuses:', loseBidsError)
     }
     
     console.log(`Winner selected for request ${requestId}: Vendor ${winningBid.vendor_id} (${vendorData?.name}) with bid ₹${winningBid.bid_amount}`)

@@ -273,12 +273,12 @@ export function VendorDashboard() {
       
       // Filter for jobs assigned to this vendor
       const assignedJobs = data.filter(req => 
-        (req.assigned_vendor === vendorProfile?.vendor_id || req.assigned_vendor_id === vendorProfile?.vendor_id) && 
+        req.assigned_vendor === vendorProfile?.vendor_id && 
         (req.status === 'assigned' || req.status === 'bidding')
       )
       
       const completedJobs = data.filter(req => 
-        (req.assigned_vendor === vendorProfile?.vendor_id || req.assigned_vendor_id === vendorProfile?.vendor_id) && 
+        req.assigned_vendor === vendorProfile?.vendor_id && 
         req.status === 'completed'
       )
       
@@ -308,7 +308,7 @@ export function VendorDashboard() {
         
         // Find jobs assigned to this vendor that weren't in myJobs before
         const assignedJobs = data.filter(req => 
-          (req.assigned_vendor === vendorProfile?.vendor_id || req.assigned_vendor_id === vendorProfile?.vendor_id) && 
+          req.assigned_vendor === vendorProfile?.vendor_id && 
           req.status === 'assigned'
         )
         
@@ -408,7 +408,7 @@ export function VendorDashboard() {
         const updatedRequests = await pickupRequestService.getActivePickupRequests()
         const wonJob = updatedRequests.find(job => 
           job.request_id === requestId && 
-          (job.assigned_vendor === vendorProfile?.vendor_id || job.assigned_vendor_id === vendorProfile?.vendor_id) &&
+          job.assigned_vendor === vendorProfile?.vendor_id &&
           job.status === 'assigned'
         )
         
@@ -1034,7 +1034,7 @@ export function VendorDashboard() {
                         </Badge>
                       </div>
                       <CardDescription>
-                        Bin {job.bin_id} • Industrial Area, Sector 18, Noida • Winning Bid: ₹{job.winning_bid_amount || job.winning_bid || job.base_bid}
+                        Bin {job.bin_id} • Industrial Area, Sector 18, Noida • Winning Bid: ₹{job.total_amount || job.winning_bid || job.base_bid}
                         {job.assigned_at && (
                           <span className="block text-green-600 text-sm mt-1">
                             🎉 Assigned on {new Date(job.assigned_at).toLocaleString()}
@@ -1056,7 +1056,7 @@ export function VendorDashboard() {
                             </div>
                             <div className="p-3 bg-white rounded-lg border">
                               <p className="font-medium">Your Winning Bid</p>
-                              <p className="text-green-600 font-bold">₹{job.winning_bid_amount || job.winning_bid || job.base_bid}</p>
+                              <p className="text-green-600 font-bold">₹{job.total_amount || job.winning_bid || job.base_bid}</p>
                               <p className="text-xs text-muted-foreground">
                                 Won the auction
                               </p>
@@ -1174,7 +1174,7 @@ export function VendorDashboard() {
                         </Badge>
                       </div>
                       <CardDescription>
-                        Completed on {new Date(job.completed_at || job.updated_at).toLocaleDateString()} • Earned: ₹{job.winning_bid_amount || job.winning_bid || job.base_bid}
+                        Completed on {new Date(job.completed_at || job.updated_at).toLocaleDateString()} • Earned: ₹{job.total_amount || job.winning_bid || job.base_bid}
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
@@ -1191,7 +1191,7 @@ export function VendorDashboard() {
                         </div>
                         <div className="p-3 bg-white rounded-lg border">
                           <p className="font-medium">Payment Received</p>
-                          <p className="text-green-600 font-bold">₹{job.winning_bid_amount || job.winning_bid || job.base_bid}</p>
+                          <p className="text-green-600 font-bold">₹{job.total_amount || job.winning_bid || job.base_bid}</p>
                           <p className="text-xs text-muted-foreground">Auction winner payment</p>
                         </div>
                         <div className="p-3 bg-white rounded-lg border">
