@@ -36,7 +36,6 @@ export interface VendorBid {
   bid_amount: number
   created_at: string
   status: 'active' | 'won' | 'lost'
-  message?: string
 }
 
 // Market rates per kg for different waste types (in INR)
@@ -488,7 +487,7 @@ export const pickupRequestService = {
   },
 
   // Place or update a bid for a pickup request
-  async placeBid(requestId: string, vendorId: string, bidAmount: number, message?: string): Promise<VendorBid> {
+  async placeBid(requestId: string, vendorId: string, bidAmount: number): Promise<VendorBid> {
     const supabase = createClientComponentClient()
     
     // First, get the pickup request to validate bidding window and get current highest bid
@@ -546,8 +545,7 @@ export const pickupRequestService = {
         .from('vendor_bids')
         .update({ 
           bid_amount: bidAmount,
-          created_at: new Date().toISOString(),
-          message: message || ''
+          created_at: new Date().toISOString()
         })
         .eq('id', existingBid.id)
         .select()
@@ -566,8 +564,7 @@ export const pickupRequestService = {
         vendor_contact: data.vendor_contact,
         bid_amount: data.bid_amount,
         created_at: data.created_at,
-        status: data.status,
-        message: data.message
+        status: data.status
       }
     } else {
       // Create new bid
@@ -580,8 +577,7 @@ export const pickupRequestService = {
           vendor_email: vendor.email,
           vendor_contact: vendor.contact,
           bid_amount: bidAmount,
-          status: 'active',
-          message: message || ''
+          status: 'active'
         })
         .select()
         .single()
@@ -599,8 +595,7 @@ export const pickupRequestService = {
         vendor_contact: data.vendor_contact,
         bid_amount: data.bid_amount,
         created_at: data.created_at,
-        status: data.status,
-        message: data.message
+        status: data.status
       }
     }
   },

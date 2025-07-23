@@ -323,10 +323,6 @@ export function IndustryDashboard() {
         return "bg-yellow-100 text-yellow-800"
       case "low":
         return "bg-green-100 text-green-800"
-      case "pending":
-        return "bg-yellow-100 text-yellow-800"
-      case "bidding":
-        return "bg-orange-100 text-orange-800"
       case "assigned":
         return "bg-blue-100 text-blue-800"
       case "completed":
@@ -749,7 +745,7 @@ export function IndustryDashboard() {
                     {pickupRequests.map((request) => {
                       const bids = request.vendor_bids || []
                       const highestBid = bids.length > 0 ? Math.max(...bids.map((bid: any) => bid.bid_amount)) : 0
-                      const winningBid = bids.find((bid: any) => bid.status === 'won') || 
+                      const winningBid = bids.find((bid: any) => bid.is_winner === true) || 
                                        (request.status === 'assigned' && bids.find((bid: any) => bid.vendor_id === (request.assigned_vendor_id || request.assigned_vendor)))
                       
                       return (
@@ -777,19 +773,25 @@ export function IndustryDashboard() {
                           <TableCell>
                             {winningBid ? (
                               <div className="text-sm space-y-1">
-                                <div className="font-medium">{request.assigned_vendor_name || winningBid.vendor_name || 'EcoWaste Solutions Pvt Ltd'}</div>
-                                <div className="text-muted-foreground text-xs font-medium">
-                                  🏢 EcoWaste Solutions Pvt Ltd
-                                </div>
+                                <div className="font-medium">{request.assigned_vendor_name || winningBid.vendor_name}</div>
+                                {request.assigned_vendor_company && (
+                                  <div className="text-muted-foreground text-xs font-medium">
+                                    🏢 {request.assigned_vendor_company}
+                                  </div>
+                                )}
                                 <div className="text-muted-foreground text-xs">
-                                  📞 +91 98765 43210
+                                  📞 {request.assigned_vendor_contact || winningBid.vendor_contact}
                                 </div>
-                                <div className="text-muted-foreground text-xs">
-                                  ✉️ operations@ecowaste.com
-                                </div>
-                                <div className="text-muted-foreground text-xs">
-                                  📍 Waste Management Complex, Sector 15, Noida
-                                </div>
+                                {request.assigned_vendor_email && (
+                                  <div className="text-muted-foreground text-xs">
+                                    ✉️ {request.assigned_vendor_email}
+                                  </div>
+                                )}
+                                {request.assigned_vendor_address && (
+                                  <div className="text-muted-foreground text-xs">
+                                    📍 {request.assigned_vendor_address}
+                                  </div>
+                                )}
                                 <div className="text-green-600 text-xs font-medium mt-1">
                                   💰 Winning Bid: ₹{request.winning_bid_amount || winningBid.bid_amount}
                                 </div>
@@ -909,7 +911,7 @@ export function IndustryDashboard() {
                       .filter(request => request.status === 'assigned' || request.status === 'completed')
                       .map((request) => {
                         const bids = request.vendor_bids || []
-                        const winningBid = bids.find((bid: any) => bid.status === 'won') || 
+                        const winningBid = bids.find((bid: any) => bid.is_winner === true) || 
                                          (request.status === 'assigned' && bids.find((bid: any) => bid.vendor_id === (request.assigned_vendor_id || request.assigned_vendor)))
                         
                         return (
@@ -926,20 +928,26 @@ export function IndustryDashboard() {
                             <TableCell>
                               <div className="flex flex-col space-y-1">
                                 <span className="font-medium">
-                                  {request.assigned_vendor_name || winningBid?.vendor_name || 'EcoWaste Solutions Pvt Ltd'}
+                                  {request.assigned_vendor_name || winningBid?.vendor_name || 'Unknown Vendor'}
                                 </span>
-                                <span className="text-xs text-blue-600 font-medium">
-                                  🏢 EcoWaste Solutions Pvt Ltd
-                                </span>
+                                {(request.assigned_vendor_company || winningBid?.vendor_company) && (
+                                  <span className="text-xs text-blue-600 font-medium">
+                                    🏢 {request.assigned_vendor_company || winningBid?.vendor_company}
+                                  </span>
+                                )}
                                 <span className="text-xs text-muted-foreground">
-                                  📞 +91 98765 43210
+                                  📞 {request.assigned_vendor_contact || winningBid?.vendor_contact || 'N/A'}
                                 </span>
-                                <span className="text-xs text-muted-foreground">
-                                  ✉️ operations@ecowaste.com
-                                </span>
-                                <span className="text-xs text-muted-foreground">
-                                  📍 Waste Management Complex, Sector 15, Noida
-                                </span>
+                                {(request.assigned_vendor_email || winningBid?.vendor_email) && (
+                                  <span className="text-xs text-muted-foreground">
+                                    ✉️ {request.assigned_vendor_email || winningBid?.vendor_email}
+                                  </span>
+                                )}
+                                {(request.assigned_vendor_address || winningBid?.vendor_address) && (
+                                  <span className="text-xs text-muted-foreground">
+                                    📍 {request.assigned_vendor_address || winningBid?.vendor_address}
+                                  </span>
+                                )}
                               </div>
                             </TableCell>
                             <TableCell>

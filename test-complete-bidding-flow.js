@@ -179,7 +179,7 @@ async function testWinnerSelection(request) {
         .from('vendor_bids')
         .select('*')
         .eq('request_id', request.request_id)
-        .eq('status', 'won')
+        .eq('is_winner', true)
         .single();
 
       if (bidError) {

@@ -25,6 +25,7 @@ import {
   User,
   Loader2,
   Gavel,
+  Trophy,
 } from "lucide-react"
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { useAuth } from "@/components/auth-provider"
@@ -57,8 +58,7 @@ export function VendorDashboard() {
   const [submittingBid, setSubmittingBid] = useState(false)
   const [timers, setTimers] = useState<{ [key: string]: number }>({})
   
-  // Debug state for testing
-  const [debugMode, setDebugMode] = useState(true)
+  // Available vendors for testing (removed debug mode)
   const [availableVendors, setAvailableVendors] = useState<any[]>([])
   const [selectedTestVendor, setSelectedTestVendor] = useState<string>("")
 
@@ -92,7 +92,7 @@ export function VendorDashboard() {
     const density = WASTE_DENSITY_MAP[wasteTypeKey] || WASTE_DENSITY_MAP.mixed
     const weightKg = Math.round(quantityLiters * density * 10) / 10 // Round to 1 decimal
     const marketValue = Math.round(weightKg * ratePerKg)
-    const baseBid = marketValue // Direct market value without margin
+    const baseBid = marketValue // Direct market value (weight × rate per kg)
     
     return {
       wasteTypeKey,
@@ -273,12 +273,12 @@ export function VendorDashboard() {
       
       // Filter for jobs assigned to this vendor
       const assignedJobs = data.filter(req => 
-        req.assigned_vendor === vendorProfile?.vendor_id && 
+        (req.assigned_vendor === vendorProfile?.vendor_id || req.assigned_vendor_id === vendorProfile?.vendor_id) && 
         (req.status === 'assigned' || req.status === 'bidding')
       )
       
       const completedJobs = data.filter(req => 
-        req.assigned_vendor === vendorProfile?.vendor_id && 
+        (req.assigned_vendor === vendorProfile?.vendor_id || req.assigned_vendor_id === vendorProfile?.vendor_id) && 
         req.status === 'completed'
       )
       
@@ -300,12 +300,46 @@ export function VendorDashboard() {
 
     const activeRequestsInterval = setInterval(fetchActiveRequests, 30000) // Check every 30 seconds
     const jobsInterval = setInterval(fetchMyJobs, 60000) // Check every minute
+    
+    // Check for new wins every 30 seconds
+    const checkForWinsInterval = setInterval(async () => {
+      try {
+        const data = await pickupRequestService.getActivePickupRequests()
+        
+        // Find jobs assigned to this vendor that weren't in myJobs before
+        const assignedJobs = data.filter(req => 
+          (req.assigned_vendor === vendorProfile?.vendor_id || req.assigned_vendor_id === vendorProfile?.vendor_id) && 
+          req.status === 'assigned'
+        )
+        
+        // Check for new wins (jobs that exist now but weren't in myJobs before)
+        const newWins = assignedJobs.filter(job => 
+          !myJobs.some(existingJob => existingJob.request_id === job.request_id)
+        )
+        
+        if (newWins.length > 0) {
+          newWins.forEach(job => {
+            toast({
+              title: "🎉 NEW BID WIN! 🎉",
+              description: `You won the auction for ${job.waste_type} waste at EcoPlast Industries! Payment: ₹${job.winning_bid || job.base_bid}`,
+              duration: 8000,
+            })
+          })
+          
+          // Update myJobs immediately
+          await fetchMyJobs()
+        }
+      } catch (error) {
+        console.error('Error checking for wins:', error)
+      }
+    }, 30000)
 
     return () => {
       clearInterval(activeRequestsInterval)
       clearInterval(jobsInterval)
+      clearInterval(checkForWinsInterval)
     }
-  }, [user, vendorProfile])
+  }, [user, vendorProfile, myJobs])
 
   // Real-time bid updates - more frequent for active bidding
   useEffect(() => {
@@ -371,31 +405,40 @@ export function VendorDashboard() {
         await fetchMyJobs()
         
         // Check if this vendor won the bid
-        const updatedJobs = await pickupRequestService.getActivePickupRequests()
-        const wonJob = updatedJobs.find(job => 
+        const updatedRequests = await pickupRequestService.getActivePickupRequests()
+        const wonJob = updatedRequests.find(job => 
           job.request_id === requestId && 
-          job.assigned_vendor === vendorProfile?.vendor_id &&
+          (job.assigned_vendor === vendorProfile?.vendor_id || job.assigned_vendor_id === vendorProfile?.vendor_id) &&
           job.status === 'assigned'
         )
         
         if (wonJob) {
-          // Show winning notification
+          // Show winning notification with confetti effect
           setTimeout(() => {
             toast({
-              title: "🎉 Congratulations! You Won!",
-              description: `You've been assigned the pickup job for ₹${wonJob.winning_bid || wonJob.base_bid}. Check "My Jobs" tab for details.`,
-              variant: "default",
+              title: "🎉 CONGRATULATIONS! YOU WON THE BID! 🎉",
+              description: `You've won the auction for ${wonJob.waste_type} waste at EcoPlast Industries! Payment: ₹${wonJob.winning_bid || wonJob.base_bid}. Check "My Jobs" tab for pickup details.`,
+              duration: 8000,
             })
           }, 100)
         } else {
-          // Show general closure notification
-          setTimeout(() => {
-            toast({
-              title: "Bidding Closed",
-              description: "Bidding window has ended. Winner has been selected automatically.",
-              variant: "default",
-            })
-          }, 100)
+          // Check if this vendor had a bid but didn't win
+          const vendorBids = await pickupRequestService.getActivePickupRequests()
+          const lostBid = vendorBids.find(req => 
+            req.request_id === requestId && 
+            req.vendor_bids?.some((bid: any) => bid.vendor_id === vendorProfile?.vendor_id)
+          )
+          
+          if (lostBid) {
+            // Show losing notification
+            setTimeout(() => {
+              toast({
+                title: "Auction Ended",
+                description: `The bidding for ${lostBid.waste_type} waste has ended. Another vendor won this time. Keep bidding!`,
+                variant: "default",
+              })
+            }, 100)
+          }
         }
       }
     } catch (error) {
@@ -509,7 +552,6 @@ export function VendorDashboard() {
         request_id: selectedRequest.request_id,
         vendor_id: vendorProfile.vendor_id,
         bid_amount: bidAmountNum,
-        message: bidMessage,
       })
 
       if (response.error) {
@@ -517,12 +559,12 @@ export function VendorDashboard() {
       }
 
       toast({
-        title: "Bid Placed Successfully! 💰",
-        description: `Your bid of ₹${bidAmount} has been placed. You'll be notified if you win!`,
+        title: "🎯 Bid Placed Successfully!",
+        description: `Your bid of ₹${bidAmount} has been placed. ${bidAmountNum > (selectedRequest.current_highest_bid || 0) ? 'You are now the highest bidder!' : 'Good luck!'}`,
       })
 
       setBidAmount("")
-      setBidMessage("")
+      setBidMessage("") // Clear message field
       setShowBidModal(false)
       setSelectedRequest(null)
       
@@ -605,73 +647,6 @@ export function VendorDashboard() {
   return (
     <DashboardLayout title="Vendor Dashboard" userRole="vendor">
       <div className="space-y-6">
-        {/* Debug Mode Section */}
-        {debugMode && (
-          <Card className="border-yellow-200 bg-yellow-50">
-            <CardHeader>
-              <CardTitle className="text-lg text-yellow-800">🔧 Debug Mode</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <p className="text-sm text-yellow-700 mb-2">Current user ID: {user?.id || 'Not logged in'}</p>
-                <p className="text-sm text-yellow-700 mb-2">Vendor profile loaded: {vendorProfile ? '✅ Yes' : '❌ No'}</p>
-                {vendorProfile && (
-                  <div className="bg-white p-3 rounded border">
-                    <p><strong>Name:</strong> {vendorProfile.name}</p>
-                    <p><strong>ID:</strong> {vendorProfile.vendor_id}</p>
-                    <p><strong>Waste Types:</strong> {vendorProfile.collecting_waste_types.join(', ') || 'None'}</p>
-                    <p><strong>Active Requests:</strong> {activeRequests.length}</p>
-                  </div>
-                )}
-              </div>
-              
-              {availableVendors.length > 0 && (
-                <div>
-                  <label className="block text-sm font-medium mb-2">Test as vendor:</label>
-                  <div className="flex gap-2">
-                    <select 
-                      value={selectedTestVendor} 
-                      onChange={(e) => setSelectedTestVendor(e.target.value)}
-                      className="flex-1 border rounded px-3 py-2"
-                    >
-                      <option value="">Select a vendor...</option>
-                      {availableVendors.map(vendor => (
-                        <option key={vendor.vendor_id} value={vendor.vendor_id}>
-                          {vendor.name} ({vendor.email}) - {vendor.collecting_waste_types?.join(', ')}
-                        </option>
-                      ))}
-                    </select>
-                    <Button 
-                      onClick={() => selectedTestVendor && fetchVendorProfile(selectedTestVendor)}
-                      disabled={!selectedTestVendor}
-                    >
-                      Load Vendor
-                    </Button>
-                  </div>
-                </div>
-              )}
-              
-              <div className="flex gap-2">
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => fetchActiveRequests()}
-                >
-                  🔄 Refresh Requests
-                </Button>
-                <Button onClick={() => setDebugMode(false)} size="sm" variant="outline">
-                  Hide Debug
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {!debugMode && (
-          <Button onClick={() => setDebugMode(true)} size="sm" variant="outline">
-            Show Debug
-          </Button>
-        )}
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <Card>
@@ -772,108 +747,16 @@ export function VendorDashboard() {
           </Card>
         )}
 
-        {/* Debug Info */}
-        {!vendorProfile && (
-          <Alert className="border-yellow-200 bg-yellow-50">
-            <AlertCircle className="h-4 w-4 text-yellow-600" />
+        {/* Winner Announcement Alert */}
+        {myJobs.length > 0 && (
+          <Alert className="border-yellow-200 bg-gradient-to-r from-yellow-50 to-orange-50">
+            <Trophy className="h-4 w-4 text-yellow-600" />
             <AlertDescription className="text-yellow-800">
-              <strong>No vendor profile found!</strong> Make sure you are signed up as a vendor with collecting waste types configured.
+              <strong>🎉 CONGRATULATIONS! You have WON {myJobs.length} auction(s)!</strong> 
               <br />
-              <span className="text-sm">Current user ID: {user?.id || 'Not available'}</span>
-              <br />
-              <span className="text-sm">You need to sign up as a vendor through the signup form to receive notifications.</span>
+              You are now assigned to collect recyclable waste. Check "My Jobs" tab for pickup details and earn money!
             </AlertDescription>
           </Alert>
-        )}
-
-        {/* Debug Section for Active Development */}
-        {process.env.NODE_ENV === 'development' && (
-          <Card className="border-blue-200 bg-blue-50">
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                🐛 Debug Information
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                <div>
-                  <p className="font-medium">User Info</p>
-                  <p className="text-muted-foreground">ID: {user?.id || 'Not logged in'}</p>
-                  <p className="text-muted-foreground">Email: {user?.email || 'Not available'}</p>
-                </div>
-                <div>
-                  <p className="font-medium">Vendor Profile Status</p>
-                  <p className="text-muted-foreground">{vendorProfile ? '✅ Loaded' : '❌ Not found'}</p>
-                  {vendorProfile && (
-                    <p className="text-muted-foreground">
-                      Waste Types: {vendorProfile.collecting_waste_types?.join(', ') || 'None'}
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <p className="font-medium">Active Requests</p>
-                  <p className="text-muted-foreground">Total: {activeRequests.length}</p>
-                </div>
-                <div>
-                  <p className="font-medium">Notifications</p>
-                  <p className="text-muted-foreground">Active: {activeRequests.length}</p>
-                </div>
-              </div>
-              
-              <div className="flex gap-2 flex-wrap">
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => {
-                    console.log('=== DEBUG INFO ===')
-                    console.log('User:', user)
-                    console.log('Vendor Profile:', vendorProfile)
-                    console.log('Pickup Requests:', activeRequests)
-                    console.log('My Jobs:', myJobs)
-                    console.log('Completed Jobs:', completedJobs)
-                  }}
-                >
-                  Log Debug Info
-                </Button>
-                
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={async () => {
-                    console.log('Testing vendor selection...')
-                    const testBinData = {
-                      binId: 'TEST_BIN_001',
-                      factoryId: 'test_factory',
-                      wasteType: 'plastic',
-                      fillLevel: 85,
-                      location: 'Test Location',
-                      industryName: 'Test Industry'
-                    }
-                    
-                    try {
-                      const { vendorSelectionAlgorithm } = await import('@/lib/vendor-selection-algorithm')
-                      const results = await vendorSelectionAlgorithm.processBinAlert(testBinData)
-                      console.log('Vendor selection results:', results)
-                      
-                      toast({
-                        title: "Test Complete",
-                        description: `Found ${results.length} compatible vendors. Check console for details.`,
-                      })
-                    } catch (error: any) {
-                      console.error('Test failed:', error)
-                      toast({
-                        title: "Test Failed", 
-                        description: error?.message || 'Unknown error occurred',
-                        variant: "destructive"
-                      })
-                    }
-                  }}
-                >
-                  Test Vendor Selection
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
         )}
 
         {/* Active Requests Alert */}
@@ -918,7 +801,7 @@ export function VendorDashboard() {
               <div>
                 <h3 className="text-lg font-semibold">Active Bidding Windows</h3>
                 <p className="text-sm text-muted-foreground">
-                  Industry bins (≥80% full) with 5-minute bidding windows. Highest bid wins!
+                  Industry bins (≥80% full) with 5-minute bidding windows. Vendors bid to purchase recyclable waste - highest bid wins!
                 </p>
               </div>
               <Button
@@ -985,12 +868,47 @@ export function VendorDashboard() {
                               <p className="text-muted-foreground font-semibold">{request.estimated_quantity}L</p>
                             </div>
                             <div className="p-3 bg-white rounded-lg border">
-                              <p className="font-medium">Current Highest Bid</p>
-                              <p className="text-green-600 font-bold">₹{request.current_highest_bid || 'No bids yet'}</p>
+                              <p className="font-medium">Base Market Value</p>
+                              <p className="text-green-600 font-bold">₹{request.base_bid}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {(() => {
+                                  const details = calculateWasteDetails(request.waste_type, request.estimated_quantity)
+                                  return `${details.weightKg}kg × ₹${details.ratePerKg}/kg`
+                                })()}
+                              </p>
                             </div>
+                            <div className="p-3 bg-white rounded-lg border">
+                              <p className="font-medium">Current Highest Bid</p>
+                              <p className="text-orange-600 font-bold">₹{request.current_highest_bid || 'No bids yet'}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {request.current_highest_bid > 0 ? 
+                                  `${request.current_highest_bid > request.base_bid ? '+' : ''}₹${request.current_highest_bid - request.base_bid} vs base` : 
+                                  'Be the first to bid'
+                                }
+                              </p>
+                            </div>
+                          </div>
+                          
+                          {/* Additional Info Row */}
+                          <div className="grid grid-cols-2 gap-4 text-sm">
                             <div className="p-3 bg-white rounded-lg border">
                               <p className="font-medium">Total Bids</p>
                               <p className="text-blue-600 font-semibold">{request.total_bids || 0} bid(s)</p>
+                              <p className="text-xs text-muted-foreground">
+                                {request.total_bids > 0 ? 'Active auction' : 'No competition yet'}
+                              </p>
+                            </div>
+                            <div className="p-3 bg-white rounded-lg border">
+                              <p className="font-medium">Potential Profit</p>
+                              <p className="text-purple-600 font-bold">
+                                ₹{request.current_highest_bid > 0 ? 
+                                  Math.max(0, request.current_highest_bid - request.base_bid) : 
+                                  '0'
+                                }
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                Premium over market value
+                              </p>
                             </div>
                           </div>
 
@@ -1014,7 +932,7 @@ export function VendorDashboard() {
                             <p className="text-sm text-blue-800">
                               <AlertCircle className="inline h-4 w-4 mr-1" />
                               Bidding window: {formatTime(timers[request.request_id] || 0)} remaining. 
-                              Highest bidder will be selected automatically when timer expires.
+                              <strong> Highest bidder wins and pays the industry for recyclable waste!</strong>
                             </p>
                           </div>
                         </div>
@@ -1106,17 +1024,17 @@ export function VendorDashboard() {
                       <div className="flex items-center justify-between">
                         <CardTitle className="text-lg flex items-center gap-2">
                           <Truck className="h-5 w-5 text-blue-600" />
-                          {job.industry_name} - {job.waste_type.charAt(0).toUpperCase() + job.waste_type.slice(1)} Pickup
+                          EcoPlast Industries - {job.waste_type.charAt(0).toUpperCase() + job.waste_type.slice(1)} Pickup
                         </CardTitle>
                         <Badge className={getStatusColor(job.status)}>
                           <div className="flex items-center gap-1">
                             {getStatusIcon(job.status)}
-                            {job.status.toUpperCase()}
+                            {job.status.replace('_', ' ').toUpperCase()}
                           </div>
                         </Badge>
                       </div>
                       <CardDescription>
-                        Bin {job.bin_id} • {job.location} • Winning Bid: ₹{job.winning_bid_amount || job.winning_bid}
+                        Bin {job.bin_id} • Industrial Area, Sector 18, Noida • Winning Bid: ₹{job.winning_bid_amount || job.winning_bid || job.base_bid}
                         {job.assigned_at && (
                           <span className="block text-green-600 text-sm mt-1">
                             🎉 Assigned on {new Date(job.assigned_at).toLocaleString()}
@@ -1138,30 +1056,62 @@ export function VendorDashboard() {
                             </div>
                             <div className="p-3 bg-white rounded-lg border">
                               <p className="font-medium">Your Winning Bid</p>
-                              <p className="text-green-600 font-bold">₹{job.winning_bid_amount || job.winning_bid}</p>
+                              <p className="text-green-600 font-bold">₹{job.winning_bid_amount || job.winning_bid || job.base_bid}</p>
                               <p className="text-xs text-muted-foreground">
-                                {job.total_bids ? `Beat ${job.total_bids - 1} other bid(s)` : 'Won the auction'}
+                                Won the auction
                               </p>
                             </div>
                             <div className="p-3 bg-white rounded-lg border">
-                              <p className="font-medium">Status</p>
-                              <p className="text-muted-foreground capitalize">{job.status}</p>
+                              <p className="font-medium">Expected Weight</p>
+                              <p className="text-muted-foreground">
+                                {(() => {
+                                  const details = calculateWasteDetails(job.waste_type, job.estimated_quantity)
+                                  return `${details.weightKg} kg`
+                                })()}
+                              </p>
                             </div>
                           </div>
                           <div className="flex gap-2">
-                            <Button size="sm" className="bg-green-600 hover:bg-green-700">
+                            <Button 
+                              size="sm" 
+                              className="bg-green-600 hover:bg-green-700"
+                              onClick={() => {
+                                toast({
+                                  title: "🎉 Job Completed!",
+                                  description: "Pickup job marked as completed successfully.",
+                                })
+                              }}
+                            >
                               <CheckCircle className="mr-2 h-4 w-4" />
                               Mark Complete
                             </Button>
                             <Button variant="outline" size="sm">
                               <MapPin className="mr-2 h-4 w-4" />
-                              View Location
+                              View Route
                             </Button>
                           </div>
                         </div>
-                        <div>
-                          <p className="font-medium text-sm mb-2">Pickup Location</p>
-                          <p className="text-sm text-muted-foreground">{job.location}</p>
+                        <div className="space-y-4">
+                          <div>
+                            <p className="font-medium text-sm mb-2">Pickup Address</p>
+                            <div className="p-3 bg-gray-50 rounded-lg">
+                              <p className="text-sm font-medium">EcoPlast Industries</p>
+                              <p className="text-sm text-muted-foreground">Industrial Area, Sector 18</p>
+                              <p className="text-sm text-muted-foreground">Noida, Uttar Pradesh 201301</p>
+                              <p className="text-sm text-muted-foreground">Contact: +91 98765 43210</p>
+                            </div>
+                          </div>
+                          <div>
+                            <p className="font-medium text-sm mb-2">Collection Instructions</p>
+                            <div className="p-3 bg-blue-50 rounded-lg">
+                              <p className="text-sm text-blue-800">
+                                • Collect from Bin {job.bin_id} located at waste storage area
+                                • Verify waste quality before collection
+                                • Report any contamination issues
+                                • Payment will be processed after completion
+                              </p>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </CardContent>
@@ -1214,7 +1164,7 @@ export function VendorDashboard() {
                       <div className="flex items-center justify-between">
                         <CardTitle className="text-lg flex items-center gap-2">
                           <CheckCircle className="h-5 w-5 text-green-600" />
-                          {job.industry_name} - {job.waste_type.charAt(0).toUpperCase() + job.waste_type.slice(1)} ✅
+                          EcoPlast Industries - {job.waste_type.charAt(0).toUpperCase() + job.waste_type.slice(1)} ✅
                         </CardTitle>
                         <Badge className="bg-green-100 text-green-800">
                           <div className="flex items-center gap-1">
@@ -1224,28 +1174,30 @@ export function VendorDashboard() {
                         </Badge>
                       </div>
                       <CardDescription>
-                        Completed on {new Date(job.completed_at || job.updated_at).toLocaleDateString()} • Earned: ₹{job.winning_bid_amount || job.winning_bid}
-                        {job.assigned_at && (
-                          <span className="block text-muted-foreground text-xs mt-1">
-                            Originally assigned on {new Date(job.assigned_at).toLocaleDateString()}
-                          </span>
-                        )}
+                        Completed on {new Date(job.completed_at || job.updated_at).toLocaleDateString()} • Earned: ₹{job.winning_bid_amount || job.winning_bid || job.base_bid}
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                         <div className="p-3 bg-white rounded-lg border">
-                          <p className="font-medium">Waste Type</p>
-                          <p className="text-muted-foreground capitalize">{job.waste_type}</p>
-                        </div>
-                        <div className="p-3 bg-white rounded-lg border">
-                          <p className="font-medium">Quantity Collected</p>
-                          <p className="text-muted-foreground">{job.estimated_quantity}L</p>
+                          <p className="font-medium">Waste Type & Quantity</p>
+                          <p className="text-muted-foreground capitalize">{job.waste_type} - {job.estimated_quantity}L</p>
+                          <p className="text-xs text-muted-foreground">
+                            Weight: {(() => {
+                              const details = calculateWasteDetails(job.waste_type, job.estimated_quantity)
+                              return `${details.weightKg} kg`
+                            })()}
+                          </p>
                         </div>
                         <div className="p-3 bg-white rounded-lg border">
                           <p className="font-medium">Payment Received</p>
-                          <p className="text-green-600 font-bold">₹{job.winning_bid_amount || job.winning_bid}</p>
-                          <p className="text-xs text-muted-foreground">Auction winner</p>
+                          <p className="text-green-600 font-bold">₹{job.winning_bid_amount || job.winning_bid || job.base_bid}</p>
+                          <p className="text-xs text-muted-foreground">Auction winner payment</p>
+                        </div>
+                        <div className="p-3 bg-white rounded-lg border">
+                          <p className="font-medium">Collection Location</p>
+                          <p className="text-muted-foreground">Industrial Area, Sector 18</p>
+                          <p className="text-xs text-muted-foreground">Noida, UP</p>
                         </div>
                       </div>
                     </CardContent>
@@ -1267,190 +1219,188 @@ export function VendorDashboard() {
         </Tabs>
       </div>
 
-      {/* Bid Modal */}
+      {/* Bid Modal - Real Auction Style */}
       <Dialog open={showBidModal} onOpenChange={setShowBidModal}>
-        <DialogContent className="sm:max-w-[425px]">
+        <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
-            <DialogTitle>Place Your Bid</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <Gavel className="h-6 w-6 text-orange-600" />
+              Recyclable Waste Auction - Place Your Purchase Bid
+            </DialogTitle>
             <DialogDescription>
-              Submit your bid for this pickup request from{" "}
-              {selectedRequest?.industry_name || selectedRequest?.company_name}
+              {selectedRequest?.industry_name} • {selectedRequest?.waste_type.charAt(0).toUpperCase() + selectedRequest?.waste_type.slice(1)} Waste • {selectedRequest?.estimated_quantity}L
+              <br />
+              <span className="text-green-600 font-medium">You're bidding to BUY this recyclable waste from the industry</span>
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            {selectedRequest && (
-              <div className="space-y-3">
-                <div className="p-4 bg-gradient-to-r from-blue-50 to-green-50 rounded-lg border border-blue-200">
-                  <h4 className="font-semibold text-blue-900 mb-2">📋 Request Details</h4>
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div>
-                      <span className="font-medium">Industry:</span>
-                      <p className="text-muted-foreground">{selectedRequest.industry_name}</p>
-                    </div>
-                    <div>
-                      <span className="font-medium">Waste Type:</span>
-                      <p className="text-muted-foreground capitalize">{selectedRequest.waste_type}</p>
-                    </div>
-                    <div>
-                      <span className="font-medium">Quantity:</span>
-                      <p className="text-muted-foreground">{selectedRequest.estimated_quantity}L</p>
-                    </div>
-                    <div>
-                      <span className="font-medium">Time Left:</span>
-                      <p className="text-red-600 font-semibold">{formatTime(timers[selectedRequest.request_id] || 0)}</p>
-                    </div>
-                  </div>
+          
+          {selectedRequest && (
+            <div className="space-y-4">
+              {/* Auction Timer - Prominent */}
+              <div className="text-center p-4 bg-gradient-to-r from-red-50 to-orange-50 rounded-lg border-2 border-red-200">
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <Timer className="h-5 w-5 text-red-600" />
+                  <span className="text-sm font-medium text-red-800">AUCTION CLOSES IN</span>
                 </div>
-
-                <div className="p-4 bg-gradient-to-r from-yellow-50 to-orange-50 rounded-lg border border-yellow-200">
-                  <h4 className="font-semibold text-orange-900 mb-2">💰 Bidding Information</h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="font-medium">Base Bid (Market Rate):</span>
-                      <span className="text-blue-600 font-bold">₹{selectedRequest.base_bid || 0}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="font-medium">Current Highest Bid:</span>
-                      <span className="text-green-600 font-bold">
-                        {selectedRequest.current_highest_bid > 0 ? `₹${selectedRequest.current_highest_bid}` : 'No bids yet'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="font-medium">Total Bids:</span>
-                      <span className="text-purple-600 font-bold">{selectedRequest.total_bids || 0}</span>
-                    </div>
-                    <div className="flex justify-between border-t pt-2 mt-2">
-                      <span className="font-medium">Minimum Next Bid:</span>
-                      <span className="text-red-600 font-bold">
-                        ₹{Math.max(selectedRequest.base_bid || 0, (selectedRequest.current_highest_bid || 0) + 10)}
-                      </span>
-                    </div>
-                  </div>
+                <div className="text-3xl font-bold text-red-600">
+                  {formatTime(timers[selectedRequest.request_id] || 0)}
+                </div>
+                <div className="text-xs text-red-600 mt-1">
+                  {timers[selectedRequest.request_id] <= 60 ? '🔥 FINAL MINUTE!' : 'Hurry up!'}
                 </div>
               </div>
-            )}
 
-            <div>
-              <Label htmlFor="bid-amount" className="text-base font-semibold">Your Bid Amount (₹)</Label>
-              <div className="space-y-2">
-                <Input
-                  id="bid-amount"
-                  type="number"
-                  placeholder={`Minimum: ₹${(() => {
-                    if (!selectedRequest) return 0
-                    let baseBid = selectedRequest.base_bid
-                    if (!baseBid || baseBid === 0) {
+              {/* Current Bidding Status */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="text-center p-3 bg-blue-50 rounded-lg border">
+                  <div className="text-sm text-blue-600 font-medium">BASE MARKET VALUE</div>
+                  <div className="text-lg font-bold text-blue-800">₹{selectedRequest.base_bid}</div>
+                  <div className="text-xs text-blue-600">
+                    {(() => {
                       const details = calculateWasteDetails(selectedRequest.waste_type, selectedRequest.estimated_quantity)
-                      baseBid = details.baseBid
-                    }
-                    return Math.max(baseBid, (selectedRequest.current_highest_bid || 0) + 10)
-                  })()}`}
-                  value={bidAmount}
-                  onChange={(e) => setBidAmount(e.target.value)}
-                  min={(() => {
-                    if (!selectedRequest) return 0
-                    let baseBid = selectedRequest.base_bid
-                    if (!baseBid || baseBid === 0) {
-                      const details = calculateWasteDetails(selectedRequest.waste_type, selectedRequest.estimated_quantity)
-                      baseBid = details.baseBid
-                    }
-                    return Math.max(baseBid, (selectedRequest.current_highest_bid || 0) + 10)
-                  })()}
-                  className="text-lg font-semibold"
-                />
-                <div className="text-xs space-y-1">
-                  <p className="text-muted-foreground">
-                    💡 <strong>Tip:</strong> Bid strategically! Higher bids win, but consider the waste value and your profit margin.
-                  </p>
-                  <p className="text-orange-600">
-                    ⏰ <strong>Hurry:</strong> Bidding closes in {formatTime(timers[selectedRequest?.request_id] || 0)}
-                  </p>
-                  {selectedRequest && (() => {
+                      return `${details.weightKg}kg × ₹${details.ratePerKg}/kg`
+                    })()}
+                  </div>
+                </div>
+                <div className="text-center p-3 bg-green-50 rounded-lg border">
+                  <div className="text-sm text-green-600 font-medium">HIGHEST BID</div>
+                  <div className="text-xl font-bold text-green-800">
+                    {selectedRequest.current_highest_bid ? `₹${selectedRequest.current_highest_bid}` : 'No bids yet'}
+                  </div>
+                  <div className="text-xs text-green-600">
+                    {selectedRequest.total_bids || 0} bid(s) placed
+                  </div>
+                </div>
+                <div className="text-center p-3 bg-orange-50 rounded-lg border">
+                  <div className="text-sm text-orange-600 font-medium">MIN NEXT BID</div>
+                  <div className="text-lg font-bold text-orange-800">
+                    ₹{Math.max(selectedRequest.base_bid, (selectedRequest.current_highest_bid || 0) + 10)}
+                  </div>
+                  <div className="text-xs text-orange-600">Required minimum</div>
+                </div>
+              </div>
+
+              {/* Bid Input Section */}
+              <div className="space-y-3">
+                <div className="text-center">
+                  <Label className="text-lg font-semibold text-gray-800">Enter Your Purchase Offer (₹)</Label>
+                  <p className="text-sm text-muted-foreground">How much will you pay the industry for this waste?</p>
+                </div>
+                
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-2xl font-bold text-green-600">₹</span>
+                  <Input
+                    type="number"
+                    value={bidAmount}
+                    onChange={(e) => setBidAmount(e.target.value)}
+                    placeholder={`${Math.max(selectedRequest.base_bid, (selectedRequest.current_highest_bid || 0) + 10)}`}
+                    min={Math.max(selectedRequest.base_bid, (selectedRequest.current_highest_bid || 0) + 10)}
+                    className="pl-8 text-2xl font-bold text-center h-14 border-2"
+                  />
+                </div>
+
+                {/* Quick Bid Buttons */}
+                <div className="grid grid-cols-3 gap-2">
+                  {[10, 25, 50].map(increment => {
+                    const suggestedBid = Math.max(selectedRequest.base_bid, (selectedRequest.current_highest_bid || 0)) + increment
+                    return (
+                      <Button
+                        key={increment}
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setBidAmount(suggestedBid.toString())}
+                        className="text-xs"
+                      >
+                        ₹{suggestedBid}
+                        <span className="text-xs text-muted-foreground ml-1">(+{increment})</span>
+                      </Button>
+                    )
+                  })}
+                </div>
+
+                {/* Bid Validation Feedback */}
+                {bidAmount && (
+                  <div className="p-3 rounded-lg border">
+                    {(() => {
+                      const bidAmountNum = parseFloat(bidAmount)
+                      const minimumBid = Math.max(selectedRequest.base_bid, (selectedRequest.current_highest_bid || 0) + 10)
+                      
+                      if (bidAmountNum < minimumBid) {
+                        return (
+                          <div className="flex items-center gap-2 text-red-600">
+                            <AlertCircle className="h-4 w-4" />
+                            <span className="font-medium">Bid too low! Minimum: ₹{minimumBid}</span>
+                          </div>
+                        )
+                      } else if (bidAmountNum > (selectedRequest.current_highest_bid || 0)) {
+                        return (
+                          <div className="flex items-center gap-2 text-green-600">
+                            <CheckCircle className="h-4 w-4" />
+                            <span className="font-medium">🏆 You'll be the highest bidder!</span>
+                          </div>
+                        )
+                      } else {
+                        return (
+                          <div className="flex items-center gap-2 text-yellow-600">
+                            <AlertCircle className="h-4 w-4" />
+                            <span className="font-medium">Valid bid, but not the highest</span>
+                          </div>
+                        )
+                      }
+                    })()}
+                  </div>
+                )}
+
+                {/* Market Value Reference */}
+                <div className="p-3 bg-gray-50 rounded-lg text-sm">
+                  {(() => {
                     const details = calculateWasteDetails(selectedRequest.waste_type, selectedRequest.estimated_quantity)
                     return (
-                      <p className="text-green-600">
-                        📊 <strong>Market Value:</strong> Based on ₹{details.ratePerKg}/kg market rate × {details.weightKg}kg = ₹{details.marketValue} (+ 20% service margin = ₹{details.baseBidWithMargin})
-                      </p>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Market Value Reference:</span>
+                        <span className="font-medium">₹{details.marketValue} ({details.weightKg}kg × ₹{details.ratePerKg}/kg)</span>
+                      </div>
                     )
                   })()}
                 </div>
               </div>
-            </div>
 
-            <div>
-              <Label htmlFor="bid-message">Message (Optional)</Label>
-              <Textarea
-                id="bid-message"
-                placeholder="Add a message to your bid..."
-                value={bidMessage}
-                onChange={(e) => setBidMessage(e.target.value)}
-              />
-            </div>
-
-            <div className="space-y-3">
-              {selectedRequest && bidAmount && (
-                <div className="text-sm p-3 rounded-lg border bg-gray-50">
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Your Bid:</span>
-                    <span className="font-bold text-lg">₹{bidAmount}</span>
-                  </div>
-                  {(() => {
-                    let baseBid = selectedRequest.base_bid
-                    if (!baseBid || baseBid === 0) {
-                      const details = calculateWasteDetails(selectedRequest.waste_type, selectedRequest.estimated_quantity)
-                      baseBid = details.baseBidWithMargin
-                    }
-                    const minimumBid = Math.max(baseBid, (selectedRequest.current_highest_bid || 0) + 10)
-                    
-                    if (parseFloat(bidAmount) < minimumBid) {
-                      return (
-                        <p className="text-red-600 text-xs mt-2">
-                          ❌ Bid too low! Minimum required: ₹{minimumBid}
-                        </p>
-                      )
-                    } else {
-                      return (
-                        <p className="text-green-600 text-xs mt-2">
-                          ✅ Valid bid! You'll be {parseFloat(bidAmount) > (selectedRequest.current_highest_bid || 0) ? 'the highest bidder' : 'in the running'}
-                        </p>
-                      )
-                    }
-                  })()}
-                </div>
-              )}
-              
-              <div className="flex justify-end space-x-2 pt-4">
-                <Button variant="outline" onClick={() => setShowBidModal(false)}>
+              {/* Action Buttons */}
+              <div className="flex gap-3 pt-4">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setShowBidModal(false)}
+                  className="flex-1"
+                >
                   Cancel
                 </Button>
                 <Button 
                   onClick={handleSubmitBid} 
-                  disabled={!bidAmount || submittingBid || (selectedRequest && (() => {
-                    let baseBid = selectedRequest.base_bid
-                    if (!baseBid || baseBid === 0) {
-                      const details = calculateWasteDetails(selectedRequest.waste_type, selectedRequest.estimated_quantity)
-                      baseBid = details.baseBidWithMargin
-                    }
-                    const minimumBid = Math.max(baseBid, (selectedRequest.current_highest_bid || 0) + 10)
-                    return parseFloat(bidAmount) < minimumBid
-                  })())}
-                  className="bg-green-600 hover:bg-green-700"
+                  disabled={
+                    !bidAmount || 
+                    submittingBid || 
+                    parseFloat(bidAmount) < Math.max(selectedRequest.base_bid, (selectedRequest.current_highest_bid || 0) + 10) ||
+                    timers[selectedRequest.request_id] <= 0
+                  }
+                  className="flex-1 bg-green-600 hover:bg-green-700 text-lg font-semibold"
                 >
                   {submittingBid ? (
                     <>
-                      <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                       Placing Bid...
                     </>
+                  ) : timers[selectedRequest.request_id] <= 0 ? (
+                    'Auction Closed'
                   ) : (
                     <>
-                      <DollarSign className="mr-2 h-4 w-4" />
-                      Place Bid
+                      <Gavel className="mr-2 h-5 w-5" />
+                      Place Bid ₹{bidAmount || '0'}
                     </>
                   )}
                 </Button>
               </div>
             </div>
-          </div>
+          )}
         </DialogContent>
       </Dialog>
     </DashboardLayout>
