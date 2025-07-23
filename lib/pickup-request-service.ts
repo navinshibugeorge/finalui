@@ -566,8 +566,7 @@ export const pickupRequestService = {
         vendor_contact: data.vendor_contact,
         bid_amount: data.bid_amount,
         created_at: data.created_at,
-        status: data.status,
-        message: data.message
+        status: data.status
       }
     } else {
       // Create new bid
@@ -580,8 +579,7 @@ export const pickupRequestService = {
           vendor_email: vendor.email,
           vendor_contact: vendor.contact,
           bid_amount: bidAmount,
-          status: 'active',
-          message: message || ''
+          status: 'active'
         })
         .select()
         .single()
@@ -599,8 +597,7 @@ export const pickupRequestService = {
         vendor_contact: data.vendor_contact,
         bid_amount: data.bid_amount,
         created_at: data.created_at,
-        status: data.status,
-        message: data.message
+        status: data.status
       }
     }
   },

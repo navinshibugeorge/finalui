@@ -92,7 +92,7 @@ export function VendorDashboard() {
     const density = WASTE_DENSITY_MAP[wasteTypeKey] || WASTE_DENSITY_MAP.mixed
     const weightKg = Math.round(quantityLiters * density * 10) / 10 // Round to 1 decimal
     const marketValue = Math.round(weightKg * ratePerKg)
-    const baseBidWithMargin = Math.round(marketValue * 1.2) // 20% margin for pickup service
+    const baseBid = marketValue // Direct market value without margin
     
     return {
       wasteTypeKey,
@@ -100,7 +100,7 @@ export function VendorDashboard() {
       density,
       weightKg,
       marketValue,
-      baseBidWithMargin
+      baseBid
     }
   }
 
@@ -208,7 +208,7 @@ export function VendorDashboard() {
           // Calculate base bid if not present using centralized function
           const calculateBaseBid = (wasteType: string, quantityLiters: number): number => {
             const details = calculateWasteDetails(wasteType, quantityLiters)
-            return details.baseBidWithMargin
+            return details.baseBid
           }
           
           const baseBid = req.base_bid || calculateBaseBid(req.waste_type, req.estimated_quantity)
@@ -484,7 +484,7 @@ export function VendorDashboard() {
     let baseBid = selectedRequest.base_bid
     if (!baseBid || baseBid === 0) {
       const details = calculateWasteDetails(selectedRequest.waste_type, selectedRequest.estimated_quantity)
-      baseBid = details.baseBidWithMargin
+      baseBid = details.baseBid
     }
     
     const minimumBid = Math.max(baseBid, (selectedRequest.current_highest_bid || 0) + 10)
@@ -509,7 +509,7 @@ export function VendorDashboard() {
         request_id: selectedRequest.request_id,
         vendor_id: vendorProfile.vendor_id,
         bid_amount: bidAmountNum,
-        message: bidMessage,
+        message: "", // No message in real auction
       })
 
       if (response.error) {
@@ -517,12 +517,12 @@ export function VendorDashboard() {
       }
 
       toast({
-        title: "Bid Placed Successfully! 💰",
-        description: `Your bid of ₹${bidAmount} has been placed. You'll be notified if you win!`,
+        title: "🎯 Bid Placed Successfully!",
+        description: `Your bid of ₹${bidAmount} has been placed. ${bidAmountNum > (selectedRequest.current_highest_bid || 0) ? 'You are now the highest bidder!' : 'Good luck!'}`,
       })
 
       setBidAmount("")
-      setBidMessage("")
+      setBidMessage("") // Clear message field
       setShowBidModal(false)
       setSelectedRequest(null)
       
@@ -1267,190 +1267,180 @@ export function VendorDashboard() {
         </Tabs>
       </div>
 
-      {/* Bid Modal */}
+      {/* Bid Modal - Real Auction Style */}
       <Dialog open={showBidModal} onOpenChange={setShowBidModal}>
-        <DialogContent className="sm:max-w-[425px]">
+        <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
-            <DialogTitle>Place Your Bid</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <Gavel className="h-6 w-6 text-orange-600" />
+              Live Auction - Place Your Bid
+            </DialogTitle>
             <DialogDescription>
-              Submit your bid for this pickup request from{" "}
-              {selectedRequest?.industry_name || selectedRequest?.company_name}
+              {selectedRequest?.industry_name} • {selectedRequest?.waste_type.charAt(0).toUpperCase() + selectedRequest?.waste_type.slice(1)} Waste • {selectedRequest?.estimated_quantity}L
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            {selectedRequest && (
-              <div className="space-y-3">
-                <div className="p-4 bg-gradient-to-r from-blue-50 to-green-50 rounded-lg border border-blue-200">
-                  <h4 className="font-semibold text-blue-900 mb-2">📋 Request Details</h4>
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div>
-                      <span className="font-medium">Industry:</span>
-                      <p className="text-muted-foreground">{selectedRequest.industry_name}</p>
-                    </div>
-                    <div>
-                      <span className="font-medium">Waste Type:</span>
-                      <p className="text-muted-foreground capitalize">{selectedRequest.waste_type}</p>
-                    </div>
-                    <div>
-                      <span className="font-medium">Quantity:</span>
-                      <p className="text-muted-foreground">{selectedRequest.estimated_quantity}L</p>
-                    </div>
-                    <div>
-                      <span className="font-medium">Time Left:</span>
-                      <p className="text-red-600 font-semibold">{formatTime(timers[selectedRequest.request_id] || 0)}</p>
-                    </div>
-                  </div>
+          
+          {selectedRequest && (
+            <div className="space-y-4">
+              {/* Auction Timer - Prominent */}
+              <div className="text-center p-4 bg-gradient-to-r from-red-50 to-orange-50 rounded-lg border-2 border-red-200">
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <Timer className="h-5 w-5 text-red-600" />
+                  <span className="text-sm font-medium text-red-800">AUCTION CLOSES IN</span>
                 </div>
-
-                <div className="p-4 bg-gradient-to-r from-yellow-50 to-orange-50 rounded-lg border border-yellow-200">
-                  <h4 className="font-semibold text-orange-900 mb-2">💰 Bidding Information</h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="font-medium">Base Bid (Market Rate):</span>
-                      <span className="text-blue-600 font-bold">₹{selectedRequest.base_bid || 0}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="font-medium">Current Highest Bid:</span>
-                      <span className="text-green-600 font-bold">
-                        {selectedRequest.current_highest_bid > 0 ? `₹${selectedRequest.current_highest_bid}` : 'No bids yet'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="font-medium">Total Bids:</span>
-                      <span className="text-purple-600 font-bold">{selectedRequest.total_bids || 0}</span>
-                    </div>
-                    <div className="flex justify-between border-t pt-2 mt-2">
-                      <span className="font-medium">Minimum Next Bid:</span>
-                      <span className="text-red-600 font-bold">
-                        ₹{Math.max(selectedRequest.base_bid || 0, (selectedRequest.current_highest_bid || 0) + 10)}
-                      </span>
-                    </div>
-                  </div>
+                <div className="text-3xl font-bold text-red-600">
+                  {formatTime(timers[selectedRequest.request_id] || 0)}
+                </div>
+                <div className="text-xs text-red-600 mt-1">
+                  {timers[selectedRequest.request_id] <= 60 ? '🔥 FINAL MINUTE!' : 'Hurry up!'}
                 </div>
               </div>
-            )}
 
-            <div>
-              <Label htmlFor="bid-amount" className="text-base font-semibold">Your Bid Amount (₹)</Label>
-              <div className="space-y-2">
-                <Input
-                  id="bid-amount"
-                  type="number"
-                  placeholder={`Minimum: ₹${(() => {
-                    if (!selectedRequest) return 0
-                    let baseBid = selectedRequest.base_bid
-                    if (!baseBid || baseBid === 0) {
-                      const details = calculateWasteDetails(selectedRequest.waste_type, selectedRequest.estimated_quantity)
-                      baseBid = details.baseBidWithMargin
-                    }
-                    return Math.max(baseBid, (selectedRequest.current_highest_bid || 0) + 10)
-                  })()}`}
-                  value={bidAmount}
-                  onChange={(e) => setBidAmount(e.target.value)}
-                  min={(() => {
-                    if (!selectedRequest) return 0
-                    let baseBid = selectedRequest.base_bid
-                    if (!baseBid || baseBid === 0) {
-                      const details = calculateWasteDetails(selectedRequest.waste_type, selectedRequest.estimated_quantity)
-                      baseBid = details.baseBidWithMargin
-                    }
-                    return Math.max(baseBid, (selectedRequest.current_highest_bid || 0) + 10)
-                  })()}
-                  className="text-lg font-semibold"
-                />
-                <div className="text-xs space-y-1">
-                  <p className="text-muted-foreground">
-                    💡 <strong>Tip:</strong> Bid strategically! Higher bids win, but consider the waste value and your profit margin.
-                  </p>
-                  <p className="text-orange-600">
-                    ⏰ <strong>Hurry:</strong> Bidding closes in {formatTime(timers[selectedRequest?.request_id] || 0)}
-                  </p>
-                  {selectedRequest && (() => {
+              {/* Current Bidding Status */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="text-center p-3 bg-blue-50 rounded-lg border">
+                  <div className="text-sm text-blue-600 font-medium">BASE PRICE</div>
+                  <div className="text-lg font-bold text-blue-800">₹{selectedRequest.base_bid}</div>
+                  <div className="text-xs text-blue-600">Starting bid</div>
+                </div>
+                <div className="text-center p-3 bg-green-50 rounded-lg border">
+                  <div className="text-sm text-green-600 font-medium">HIGHEST BID</div>
+                  <div className="text-xl font-bold text-green-800">
+                    {selectedRequest.current_highest_bid ? `₹${selectedRequest.current_highest_bid}` : 'No bids yet'}
+                  </div>
+                  <div className="text-xs text-green-600">
+                    {selectedRequest.total_bids || 0} bid(s) placed
+                  </div>
+                </div>
+                <div className="text-center p-3 bg-orange-50 rounded-lg border">
+                  <div className="text-sm text-orange-600 font-medium">MIN NEXT BID</div>
+                  <div className="text-lg font-bold text-orange-800">
+                    ₹{Math.max(selectedRequest.base_bid, (selectedRequest.current_highest_bid || 0) + 10)}
+                  </div>
+                  <div className="text-xs text-orange-600">Required minimum</div>
+                </div>
+              </div>
+
+              {/* Bid Input Section */}
+              <div className="space-y-3">
+                <div className="text-center">
+                  <Label className="text-lg font-semibold text-gray-800">Enter Your Bid Amount</Label>
+                </div>
+                
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-2xl font-bold text-green-600">₹</span>
+                  <Input
+                    type="number"
+                    value={bidAmount}
+                    onChange={(e) => setBidAmount(e.target.value)}
+                    placeholder={`${Math.max(selectedRequest.base_bid, (selectedRequest.current_highest_bid || 0) + 10)}`}
+                    min={Math.max(selectedRequest.base_bid, (selectedRequest.current_highest_bid || 0) + 10)}
+                    className="pl-8 text-2xl font-bold text-center h-14 border-2"
+                  />
+                </div>
+
+                {/* Quick Bid Buttons */}
+                <div className="grid grid-cols-3 gap-2">
+                  {[10, 25, 50].map(increment => {
+                    const suggestedBid = Math.max(selectedRequest.base_bid, (selectedRequest.current_highest_bid || 0)) + increment
+                    return (
+                      <Button
+                        key={increment}
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setBidAmount(suggestedBid.toString())}
+                        className="text-xs"
+                      >
+                        ₹{suggestedBid}
+                        <span className="text-xs text-muted-foreground ml-1">(+{increment})</span>
+                      </Button>
+                    )
+                  })}
+                </div>
+
+                {/* Bid Validation Feedback */}
+                {bidAmount && (
+                  <div className="p-3 rounded-lg border">
+                    {(() => {
+                      const bidAmountNum = parseFloat(bidAmount)
+                      const minimumBid = Math.max(selectedRequest.base_bid, (selectedRequest.current_highest_bid || 0) + 10)
+                      
+                      if (bidAmountNum < minimumBid) {
+                        return (
+                          <div className="flex items-center gap-2 text-red-600">
+                            <AlertCircle className="h-4 w-4" />
+                            <span className="font-medium">Bid too low! Minimum: ₹{minimumBid}</span>
+                          </div>
+                        )
+                      } else if (bidAmountNum > (selectedRequest.current_highest_bid || 0)) {
+                        return (
+                          <div className="flex items-center gap-2 text-green-600">
+                            <CheckCircle className="h-4 w-4" />
+                            <span className="font-medium">🏆 You'll be the highest bidder!</span>
+                          </div>
+                        )
+                      } else {
+                        return (
+                          <div className="flex items-center gap-2 text-yellow-600">
+                            <AlertCircle className="h-4 w-4" />
+                            <span className="font-medium">Valid bid, but not the highest</span>
+                          </div>
+                        )
+                      }
+                    })()}
+                  </div>
+                )}
+
+                {/* Market Value Reference */}
+                <div className="p-3 bg-gray-50 rounded-lg text-sm">
+                  {(() => {
                     const details = calculateWasteDetails(selectedRequest.waste_type, selectedRequest.estimated_quantity)
                     return (
-                      <p className="text-green-600">
-                        📊 <strong>Market Value:</strong> Based on ₹{details.ratePerKg}/kg market rate × {details.weightKg}kg = ₹{details.marketValue} (+ 20% service margin = ₹{details.baseBidWithMargin})
-                      </p>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Market Value Reference:</span>
+                        <span className="font-medium">₹{details.marketValue} ({details.weightKg}kg × ₹{details.ratePerKg}/kg)</span>
+                      </div>
                     )
                   })()}
                 </div>
               </div>
-            </div>
 
-            <div>
-              <Label htmlFor="bid-message">Message (Optional)</Label>
-              <Textarea
-                id="bid-message"
-                placeholder="Add a message to your bid..."
-                value={bidMessage}
-                onChange={(e) => setBidMessage(e.target.value)}
-              />
-            </div>
-
-            <div className="space-y-3">
-              {selectedRequest && bidAmount && (
-                <div className="text-sm p-3 rounded-lg border bg-gray-50">
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Your Bid:</span>
-                    <span className="font-bold text-lg">₹{bidAmount}</span>
-                  </div>
-                  {(() => {
-                    let baseBid = selectedRequest.base_bid
-                    if (!baseBid || baseBid === 0) {
-                      const details = calculateWasteDetails(selectedRequest.waste_type, selectedRequest.estimated_quantity)
-                      baseBid = details.baseBidWithMargin
-                    }
-                    const minimumBid = Math.max(baseBid, (selectedRequest.current_highest_bid || 0) + 10)
-                    
-                    if (parseFloat(bidAmount) < minimumBid) {
-                      return (
-                        <p className="text-red-600 text-xs mt-2">
-                          ❌ Bid too low! Minimum required: ₹{minimumBid}
-                        </p>
-                      )
-                    } else {
-                      return (
-                        <p className="text-green-600 text-xs mt-2">
-                          ✅ Valid bid! You'll be {parseFloat(bidAmount) > (selectedRequest.current_highest_bid || 0) ? 'the highest bidder' : 'in the running'}
-                        </p>
-                      )
-                    }
-                  })()}
-                </div>
-              )}
-              
-              <div className="flex justify-end space-x-2 pt-4">
-                <Button variant="outline" onClick={() => setShowBidModal(false)}>
+              {/* Action Buttons */}
+              <div className="flex gap-3 pt-4">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setShowBidModal(false)}
+                  className="flex-1"
+                >
                   Cancel
                 </Button>
                 <Button 
                   onClick={handleSubmitBid} 
-                  disabled={!bidAmount || submittingBid || (selectedRequest && (() => {
-                    let baseBid = selectedRequest.base_bid
-                    if (!baseBid || baseBid === 0) {
-                      const details = calculateWasteDetails(selectedRequest.waste_type, selectedRequest.estimated_quantity)
-                      baseBid = details.baseBidWithMargin
-                    }
-                    const minimumBid = Math.max(baseBid, (selectedRequest.current_highest_bid || 0) + 10)
-                    return parseFloat(bidAmount) < minimumBid
-                  })())}
-                  className="bg-green-600 hover:bg-green-700"
+                  disabled={
+                    !bidAmount || 
+                    submittingBid || 
+                    parseFloat(bidAmount) < Math.max(selectedRequest.base_bid, (selectedRequest.current_highest_bid || 0) + 10) ||
+                    timers[selectedRequest.request_id] <= 0
+                  }
+                  className="flex-1 bg-green-600 hover:bg-green-700 text-lg font-semibold"
                 >
                   {submittingBid ? (
                     <>
-                      <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                       Placing Bid...
                     </>
+                  ) : timers[selectedRequest.request_id] <= 0 ? (
+                    'Auction Closed'
                   ) : (
                     <>
-                      <DollarSign className="mr-2 h-4 w-4" />
-                      Place Bid
+                      <Gavel className="mr-2 h-5 w-5" />
+                      Place Bid ₹{bidAmount || '0'}
                     </>
                   )}
                 </Button>
               </div>
             </div>
-          </div>
+          )}
         </DialogContent>
       </Dialog>
     </DashboardLayout>
