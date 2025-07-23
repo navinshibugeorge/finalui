@@ -57,8 +57,7 @@ export function VendorDashboard() {
   const [submittingBid, setSubmittingBid] = useState(false)
   const [timers, setTimers] = useState<{ [key: string]: number }>({})
   
-  // Debug state for testing
-  const [debugMode, setDebugMode] = useState(true)
+  // Available vendors for testing (removed debug mode)
   const [availableVendors, setAvailableVendors] = useState<any[]>([])
   const [selectedTestVendor, setSelectedTestVendor] = useState<string>("")
 
@@ -300,12 +299,46 @@ export function VendorDashboard() {
 
     const activeRequestsInterval = setInterval(fetchActiveRequests, 30000) // Check every 30 seconds
     const jobsInterval = setInterval(fetchMyJobs, 60000) // Check every minute
+    
+    // Check for new wins every 30 seconds
+    const checkForWinsInterval = setInterval(async () => {
+      try {
+        const data = await pickupRequestService.getActivePickupRequests()
+        
+        // Find jobs assigned to this vendor that weren't in myJobs before
+        const assignedJobs = data.filter(req => 
+          req.assigned_vendor === vendorProfile?.vendor_id && 
+          req.status === 'assigned'
+        )
+        
+        // Check for new wins (jobs that exist now but weren't in myJobs before)
+        const newWins = assignedJobs.filter(job => 
+          !myJobs.some(existingJob => existingJob.request_id === job.request_id)
+        )
+        
+        if (newWins.length > 0) {
+          newWins.forEach(job => {
+            toast({
+              title: "🎉 NEW BID WIN! 🎉",
+              description: `You won the auction for ${job.waste_type} waste at EcoPlast Industries! Payment: ₹${job.winning_bid || job.base_bid}`,
+              duration: 8000,
+            })
+          })
+          
+          // Update myJobs immediately
+          await fetchMyJobs()
+        }
+      } catch (error) {
+        console.error('Error checking for wins:', error)
+      }
+    }, 30000)
 
     return () => {
       clearInterval(activeRequestsInterval)
       clearInterval(jobsInterval)
+      clearInterval(checkForWinsInterval)
     }
-  }, [user, vendorProfile])
+  }, [user, vendorProfile, myJobs])
 
   // Real-time bid updates - more frequent for active bidding
   useEffect(() => {
@@ -371,31 +404,40 @@ export function VendorDashboard() {
         await fetchMyJobs()
         
         // Check if this vendor won the bid
-        const updatedJobs = await pickupRequestService.getActivePickupRequests()
-        const wonJob = updatedJobs.find(job => 
+        const updatedRequests = await pickupRequestService.getActivePickupRequests()
+        const wonJob = updatedRequests.find(job => 
           job.request_id === requestId && 
           job.assigned_vendor === vendorProfile?.vendor_id &&
           job.status === 'assigned'
         )
         
         if (wonJob) {
-          // Show winning notification
+          // Show winning notification with confetti effect
           setTimeout(() => {
             toast({
-              title: "🎉 Congratulations! You Won!",
-              description: `You've been assigned the pickup job for ₹${wonJob.winning_bid || wonJob.base_bid}. Check "My Jobs" tab for details.`,
-              variant: "default",
+              title: "🎉 CONGRATULATIONS! YOU WON THE BID! 🎉",
+              description: `You've won the auction for ${wonJob.waste_type} waste at EcoPlast Industries! Payment: ₹${wonJob.winning_bid || wonJob.base_bid}. Check "My Jobs" tab for pickup details.`,
+              duration: 8000,
             })
           }, 100)
         } else {
-          // Show general closure notification
-          setTimeout(() => {
-            toast({
-              title: "Bidding Closed",
-              description: "Bidding window has ended. Winner has been selected automatically.",
-              variant: "default",
-            })
-          }, 100)
+          // Check if this vendor had a bid but didn't win
+          const vendorBids = await pickupRequestService.getActivePickupRequests()
+          const lostBid = vendorBids.find(req => 
+            req.request_id === requestId && 
+            req.vendor_bids?.some((bid: any) => bid.vendor_id === vendorProfile?.vendor_id)
+          )
+          
+          if (lostBid) {
+            // Show losing notification
+            setTimeout(() => {
+              toast({
+                title: "Auction Ended",
+                description: `The bidding for ${lostBid.waste_type} waste has ended. Another vendor won this time. Keep bidding!`,
+                variant: "default",
+              })
+            }, 100)
+          }
         }
       }
     } catch (error) {
@@ -604,73 +646,6 @@ export function VendorDashboard() {
   return (
     <DashboardLayout title="Vendor Dashboard" userRole="vendor">
       <div className="space-y-6">
-        {/* Debug Mode Section */}
-        {debugMode && (
-          <Card className="border-yellow-200 bg-yellow-50">
-            <CardHeader>
-              <CardTitle className="text-lg text-yellow-800">🔧 Debug Mode</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <p className="text-sm text-yellow-700 mb-2">Current user ID: {user?.id || 'Not logged in'}</p>
-                <p className="text-sm text-yellow-700 mb-2">Vendor profile loaded: {vendorProfile ? '✅ Yes' : '❌ No'}</p>
-                {vendorProfile && (
-                  <div className="bg-white p-3 rounded border">
-                    <p><strong>Name:</strong> {vendorProfile.name}</p>
-                    <p><strong>ID:</strong> {vendorProfile.vendor_id}</p>
-                    <p><strong>Waste Types:</strong> {vendorProfile.collecting_waste_types.join(', ') || 'None'}</p>
-                    <p><strong>Active Requests:</strong> {activeRequests.length}</p>
-                  </div>
-                )}
-              </div>
-              
-              {availableVendors.length > 0 && (
-                <div>
-                  <label className="block text-sm font-medium mb-2">Test as vendor:</label>
-                  <div className="flex gap-2">
-                    <select 
-                      value={selectedTestVendor} 
-                      onChange={(e) => setSelectedTestVendor(e.target.value)}
-                      className="flex-1 border rounded px-3 py-2"
-                    >
-                      <option value="">Select a vendor...</option>
-                      {availableVendors.map(vendor => (
-                        <option key={vendor.vendor_id} value={vendor.vendor_id}>
-                          {vendor.name} ({vendor.email}) - {vendor.collecting_waste_types?.join(', ')}
-                        </option>
-                      ))}
-                    </select>
-                    <Button 
-                      onClick={() => selectedTestVendor && fetchVendorProfile(selectedTestVendor)}
-                      disabled={!selectedTestVendor}
-                    >
-                      Load Vendor
-                    </Button>
-                  </div>
-                </div>
-              )}
-              
-              <div className="flex gap-2">
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => fetchActiveRequests()}
-                >
-                  🔄 Refresh Requests
-                </Button>
-                <Button onClick={() => setDebugMode(false)} size="sm" variant="outline">
-                  Hide Debug
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {!debugMode && (
-          <Button onClick={() => setDebugMode(true)} size="sm" variant="outline">
-            Show Debug
-          </Button>
-        )}
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <Card>
@@ -766,110 +741,6 @@ export function VendorDashboard() {
                     }
                   </p>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Debug Info */}
-        {!vendorProfile && (
-          <Alert className="border-yellow-200 bg-yellow-50">
-            <AlertCircle className="h-4 w-4 text-yellow-600" />
-            <AlertDescription className="text-yellow-800">
-              <strong>No vendor profile found!</strong> Make sure you are signed up as a vendor with collecting waste types configured.
-              <br />
-              <span className="text-sm">Current user ID: {user?.id || 'Not available'}</span>
-              <br />
-              <span className="text-sm">You need to sign up as a vendor through the signup form to receive notifications.</span>
-            </AlertDescription>
-          </Alert>
-        )}
-
-        {/* Debug Section for Active Development */}
-        {process.env.NODE_ENV === 'development' && (
-          <Card className="border-blue-200 bg-blue-50">
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                🐛 Debug Information
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                <div>
-                  <p className="font-medium">User Info</p>
-                  <p className="text-muted-foreground">ID: {user?.id || 'Not logged in'}</p>
-                  <p className="text-muted-foreground">Email: {user?.email || 'Not available'}</p>
-                </div>
-                <div>
-                  <p className="font-medium">Vendor Profile Status</p>
-                  <p className="text-muted-foreground">{vendorProfile ? '✅ Loaded' : '❌ Not found'}</p>
-                  {vendorProfile && (
-                    <p className="text-muted-foreground">
-                      Waste Types: {vendorProfile.collecting_waste_types?.join(', ') || 'None'}
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <p className="font-medium">Active Requests</p>
-                  <p className="text-muted-foreground">Total: {activeRequests.length}</p>
-                </div>
-                <div>
-                  <p className="font-medium">Notifications</p>
-                  <p className="text-muted-foreground">Active: {activeRequests.length}</p>
-                </div>
-              </div>
-              
-              <div className="flex gap-2 flex-wrap">
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => {
-                    console.log('=== DEBUG INFO ===')
-                    console.log('User:', user)
-                    console.log('Vendor Profile:', vendorProfile)
-                    console.log('Pickup Requests:', activeRequests)
-                    console.log('My Jobs:', myJobs)
-                    console.log('Completed Jobs:', completedJobs)
-                  }}
-                >
-                  Log Debug Info
-                </Button>
-                
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={async () => {
-                    console.log('Testing vendor selection...')
-                    const testBinData = {
-                      binId: 'TEST_BIN_001',
-                      factoryId: 'test_factory',
-                      wasteType: 'plastic',
-                      fillLevel: 85,
-                      location: 'Test Location',
-                      industryName: 'Test Industry'
-                    }
-                    
-                    try {
-                      const { vendorSelectionAlgorithm } = await import('@/lib/vendor-selection-algorithm')
-                      const results = await vendorSelectionAlgorithm.processBinAlert(testBinData)
-                      console.log('Vendor selection results:', results)
-                      
-                      toast({
-                        title: "Test Complete",
-                        description: `Found ${results.length} compatible vendors. Check console for details.`,
-                      })
-                    } catch (error: any) {
-                      console.error('Test failed:', error)
-                      toast({
-                        title: "Test Failed", 
-                        description: error?.message || 'Unknown error occurred',
-                        variant: "destructive"
-                      })
-                    }
-                  }}
-                >
-                  Test Vendor Selection
-                </Button>
               </div>
             </CardContent>
           </Card>
@@ -1140,17 +1011,17 @@ export function VendorDashboard() {
                       <div className="flex items-center justify-between">
                         <CardTitle className="text-lg flex items-center gap-2">
                           <Truck className="h-5 w-5 text-blue-600" />
-                          {job.industry_name} - {job.waste_type.charAt(0).toUpperCase() + job.waste_type.slice(1)} Pickup
+                          EcoPlast Industries - {job.waste_type.charAt(0).toUpperCase() + job.waste_type.slice(1)} Pickup
                         </CardTitle>
                         <Badge className={getStatusColor(job.status)}>
                           <div className="flex items-center gap-1">
                             {getStatusIcon(job.status)}
-                            {job.status.toUpperCase()}
+                            {job.status.replace('_', ' ').toUpperCase()}
                           </div>
                         </Badge>
                       </div>
                       <CardDescription>
-                        Bin {job.bin_id} • {job.location} • Winning Bid: ₹{job.winning_bid_amount || job.winning_bid}
+                        Bin {job.bin_id} • Industrial Area, Sector 18, Noida • Winning Bid: ₹{job.winning_bid_amount || job.winning_bid || job.base_bid}
                         {job.assigned_at && (
                           <span className="block text-green-600 text-sm mt-1">
                             🎉 Assigned on {new Date(job.assigned_at).toLocaleString()}
@@ -1172,30 +1043,62 @@ export function VendorDashboard() {
                             </div>
                             <div className="p-3 bg-white rounded-lg border">
                               <p className="font-medium">Your Winning Bid</p>
-                              <p className="text-green-600 font-bold">₹{job.winning_bid_amount || job.winning_bid}</p>
+                              <p className="text-green-600 font-bold">₹{job.winning_bid_amount || job.winning_bid || job.base_bid}</p>
                               <p className="text-xs text-muted-foreground">
-                                {job.total_bids ? `Beat ${job.total_bids - 1} other bid(s)` : 'Won the auction'}
+                                Won the auction
                               </p>
                             </div>
                             <div className="p-3 bg-white rounded-lg border">
-                              <p className="font-medium">Status</p>
-                              <p className="text-muted-foreground capitalize">{job.status}</p>
+                              <p className="font-medium">Expected Weight</p>
+                              <p className="text-muted-foreground">
+                                {(() => {
+                                  const details = calculateWasteDetails(job.waste_type, job.estimated_quantity)
+                                  return `${details.weightKg} kg`
+                                })()}
+                              </p>
                             </div>
                           </div>
                           <div className="flex gap-2">
-                            <Button size="sm" className="bg-green-600 hover:bg-green-700">
+                            <Button 
+                              size="sm" 
+                              className="bg-green-600 hover:bg-green-700"
+                              onClick={() => {
+                                toast({
+                                  title: "🎉 Job Completed!",
+                                  description: "Pickup job marked as completed successfully.",
+                                })
+                              }}
+                            >
                               <CheckCircle className="mr-2 h-4 w-4" />
                               Mark Complete
                             </Button>
                             <Button variant="outline" size="sm">
                               <MapPin className="mr-2 h-4 w-4" />
-                              View Location
+                              View Route
                             </Button>
                           </div>
                         </div>
-                        <div>
-                          <p className="font-medium text-sm mb-2">Pickup Location</p>
-                          <p className="text-sm text-muted-foreground">{job.location}</p>
+                        <div className="space-y-4">
+                          <div>
+                            <p className="font-medium text-sm mb-2">Pickup Address</p>
+                            <div className="p-3 bg-gray-50 rounded-lg">
+                              <p className="text-sm font-medium">EcoPlast Industries</p>
+                              <p className="text-sm text-muted-foreground">Industrial Area, Sector 18</p>
+                              <p className="text-sm text-muted-foreground">Noida, Uttar Pradesh 201301</p>
+                              <p className="text-sm text-muted-foreground">Contact: +91 98765 43210</p>
+                            </div>
+                          </div>
+                          <div>
+                            <p className="font-medium text-sm mb-2">Collection Instructions</p>
+                            <div className="p-3 bg-blue-50 rounded-lg">
+                              <p className="text-sm text-blue-800">
+                                • Collect from Bin {job.bin_id} located at waste storage area
+                                • Verify waste quality before collection
+                                • Report any contamination issues
+                                • Payment will be processed after completion
+                              </p>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </CardContent>
@@ -1248,7 +1151,7 @@ export function VendorDashboard() {
                       <div className="flex items-center justify-between">
                         <CardTitle className="text-lg flex items-center gap-2">
                           <CheckCircle className="h-5 w-5 text-green-600" />
-                          {job.industry_name} - {job.waste_type.charAt(0).toUpperCase() + job.waste_type.slice(1)} ✅
+                          EcoPlast Industries - {job.waste_type.charAt(0).toUpperCase() + job.waste_type.slice(1)} ✅
                         </CardTitle>
                         <Badge className="bg-green-100 text-green-800">
                           <div className="flex items-center gap-1">
@@ -1258,28 +1161,30 @@ export function VendorDashboard() {
                         </Badge>
                       </div>
                       <CardDescription>
-                        Completed on {new Date(job.completed_at || job.updated_at).toLocaleDateString()} • Earned: ₹{job.winning_bid_amount || job.winning_bid}
-                        {job.assigned_at && (
-                          <span className="block text-muted-foreground text-xs mt-1">
-                            Originally assigned on {new Date(job.assigned_at).toLocaleDateString()}
-                          </span>
-                        )}
+                        Completed on {new Date(job.completed_at || job.updated_at).toLocaleDateString()} • Earned: ₹{job.winning_bid_amount || job.winning_bid || job.base_bid}
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                         <div className="p-3 bg-white rounded-lg border">
-                          <p className="font-medium">Waste Type</p>
-                          <p className="text-muted-foreground capitalize">{job.waste_type}</p>
-                        </div>
-                        <div className="p-3 bg-white rounded-lg border">
-                          <p className="font-medium">Quantity Collected</p>
-                          <p className="text-muted-foreground">{job.estimated_quantity}L</p>
+                          <p className="font-medium">Waste Type & Quantity</p>
+                          <p className="text-muted-foreground capitalize">{job.waste_type} - {job.estimated_quantity}L</p>
+                          <p className="text-xs text-muted-foreground">
+                            Weight: {(() => {
+                              const details = calculateWasteDetails(job.waste_type, job.estimated_quantity)
+                              return `${details.weightKg} kg`
+                            })()}
+                          </p>
                         </div>
                         <div className="p-3 bg-white rounded-lg border">
                           <p className="font-medium">Payment Received</p>
-                          <p className="text-green-600 font-bold">₹{job.winning_bid_amount || job.winning_bid}</p>
-                          <p className="text-xs text-muted-foreground">Auction winner</p>
+                          <p className="text-green-600 font-bold">₹{job.winning_bid_amount || job.winning_bid || job.base_bid}</p>
+                          <p className="text-xs text-muted-foreground">Auction winner payment</p>
+                        </div>
+                        <div className="p-3 bg-white rounded-lg border">
+                          <p className="font-medium">Collection Location</p>
+                          <p className="text-muted-foreground">Industrial Area, Sector 18</p>
+                          <p className="text-xs text-muted-foreground">Noida, UP</p>
                         </div>
                       </div>
                     </CardContent>

@@ -31,6 +31,7 @@ import {
   Plus,
   Edit,
   Bell,
+  Trophy,
 } from "lucide-react"
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { useAuth } from "@/components/auth-provider"
@@ -471,79 +472,6 @@ export function IndustryDashboard() {
               <strong>{bins.filter(bin => bin.waste_quality === 'hazardous').length} bin(s)</strong> contain hazardous waste requiring special handling.
             </AlertDescription>
           </Alert>
-        )}        {/* Session Tracking Debug Info */}
-        {process.env.NODE_ENV === 'development' && (
-          <Card className="border-blue-200 bg-blue-50">
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                🔧 Session Tracking Debug
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                <div>
-                  <p className="font-medium">Bins Notified This Session</p>
-                  <p className="text-muted-foreground">
-                    {notifiedBins.size > 0 ? Array.from(notifiedBins).join(', ') : 'None'}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    These bins have triggered 80% notifications and won't send again until page refresh
-                  </p>
-                </div>
-                <div>
-                  <p className="font-medium">Bins with Active Requests</p>
-                  <p className="text-muted-foreground">
-                    {binsWithActiveRequests.size > 0 ? Array.from(binsWithActiveRequests).join(', ') : 'None'}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Waste types that currently have pending/assigned requests
-                  </p>
-                </div>
-                <div>
-                  <p className="font-medium">High Fill Bins (≥80%)</p>
-                  <p className="text-muted-foreground">
-                    {highFillBins.map(bin => `${bin.bin_id} (${bin.fill_level}%)`).join(', ') || 'None'}
-                  </p>
-                </div>
-                <div>
-                  <p className="font-medium">Currently Processing</p>
-                  <p className="text-muted-foreground">
-                    {processingRequests.size > 0 ? Array.from(processingRequests).join(', ') : 'None'}
-                  </p>
-                </div>
-              </div>
-              
-              <div className="flex gap-2">
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => {
-                    console.log('=== SESSION TRACKING DEBUG ===')
-                    console.log('Notified bins:', Array.from(notifiedBins))
-                    console.log('Bins with active requests:', Array.from(binsWithActiveRequests))
-                    console.log('High fill bins:', highFillBins.map(b => `${b.bin_id}: ${b.fill_level}%`))
-                    console.log('Currently processing:', Array.from(processingRequests))
-                  }}
-                >
-                  Log Debug Info
-                </Button>
-                
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => {
-                    setNotifiedBins(new Set())
-                    toast({
-                      title: "Session Reset",
-                      description: "Cleared notified bins tracking. Bins ≥80% can now trigger notifications again.",
-                    })
-                  }}
-                >
-                  Reset Session Tracking
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
         )}
 
         <Tabs defaultValue="overview" className="space-y-4">
@@ -551,6 +479,7 @@ export function IndustryDashboard() {
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="bins">Bin Management</TabsTrigger>
             <TabsTrigger value="pickups">Pickup Requests</TabsTrigger>
+            <TabsTrigger value="auction-results">Auction Results</TabsTrigger>
             <TabsTrigger value="reports">Reports</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
@@ -939,6 +868,148 @@ export function IndustryDashboard() {
                       <h4 className="font-medium">Winner Selection</h4>
                       <p className="text-sm text-muted-foreground">
                         The vendor with the highest bid wins the pickup contract automatically.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="auction-results" className="space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="text-lg font-semibold">Auction Results & Winners</h3>
+              <Button onClick={fetchIndustryPickupRequests}>
+                <Bell className="mr-2 h-4 w-4" />
+                Refresh
+              </Button>
+            </div>
+
+            <Card>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Waste Type</TableHead>
+                      <TableHead>Quantity</TableHead>
+                      <TableHead>Winning Vendor</TableHead>
+                      <TableHead>Winning Bid</TableHead>
+                      <TableHead>Total Bids</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Date</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pickupRequests
+                      .filter(request => request.status === 'assigned' || request.status === 'completed')
+                      .map((request) => {
+                        const bids = request.vendor_bids || []
+                        const winningBid = bids.find((bid: any) => bid.status === 'won') || 
+                                         bids.find((bid: any) => bid.vendor_id === request.assigned_vendor)
+                        
+                        return (
+                          <TableRow key={request.request_id}>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+                                <span className="capitalize font-medium">{request.waste_type}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <span className="text-sm">{request.estimated_quantity}L</span>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex flex-col">
+                                <span className="font-medium">
+                                  {winningBid?.vendor_name || 'Unknown Vendor'}
+                                </span>
+                                <span className="text-xs text-muted-foreground">
+                                  {winningBid?.vendor_email || ''}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <span className="text-green-600 font-bold">
+                                ₹{request.winning_bid || winningBid?.bid_amount || request.base_bid}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm">{bids.length}</span>
+                                <Badge variant="outline" className="text-xs">
+                                  {bids.length === 0 ? 'No competition' : 
+                                   bids.length === 1 ? 'Single bid' : 
+                                   'Competitive'}
+                                </Badge>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge className={
+                                request.status === 'completed' ? 'bg-green-100 text-green-800' : 
+                                'bg-blue-100 text-blue-800'
+                              }>
+                                {request.status === 'completed' ? '✅ Completed' : '🚛 In Progress'}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <div className="text-sm">
+                                {new Date(request.assigned_at || request.created_at).toLocaleDateString()}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+
+            {pickupRequests.filter(r => r.status === 'assigned' || r.status === 'completed').length === 0 && (
+              <Card>
+                <CardContent className="p-8 text-center">
+                  <Trophy className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold mb-2">No Auction Results Yet</h3>
+                  <p className="text-muted-foreground">
+                    Auction results will appear here once vendor bidding is completed and winners are selected.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Revenue from Waste Sales</CardTitle>
+                <CardDescription>Income generated from selling recyclable waste to vendors</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="text-3xl font-bold text-green-600">
+                    ₹{pickupRequests
+                      .filter(r => r.status === 'completed')
+                      .reduce((total, r) => total + (r.winning_bid || r.base_bid || 0), 0)
+                      .toLocaleString()}
+                  </div>
+                  <p className="text-sm text-muted-foreground">Total revenue from completed pickups</p>
+                  
+                  <div className="grid grid-cols-2 gap-4 pt-4">
+                    <div className="p-3 bg-green-50 rounded-lg">
+                      <p className="text-sm font-medium">This Month</p>
+                      <p className="text-lg font-bold text-green-600">
+                        ₹{pickupRequests
+                          .filter(r => r.status === 'completed')
+                          .reduce((total, r) => total + (r.winning_bid || r.base_bid || 0), 0)
+                          .toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="p-3 bg-blue-50 rounded-lg">
+                      <p className="text-sm font-medium">Average per Pickup</p>
+                      <p className="text-lg font-bold text-blue-600">
+                        ₹{Math.round(
+                          pickupRequests
+                            .filter(r => r.status === 'completed')
+                            .reduce((total, r) => total + (r.winning_bid || r.base_bid || 0), 0) /
+                          Math.max(1, pickupRequests.filter(r => r.status === 'completed').length)
+                        ).toLocaleString()}
                       </p>
                     </div>
                   </div>

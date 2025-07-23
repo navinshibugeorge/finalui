@@ -29,7 +29,7 @@ export function AuthModal({ open, mode, defaultRole, onClose, onModeChange }: Au
     name: "",
     contact: "",
     address: "",
-    role: defaultRole || "citizen",
+    role: defaultRole || "vendor",
     companyName: "",
     factoryType: "",
     wasteTypes: [] as string[],
@@ -113,7 +113,6 @@ export function AuthModal({ open, mode, defaultRole, onClose, onModeChange }: Au
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="citizen">Citizen</SelectItem>
                     <SelectItem value="vendor">Vendor</SelectItem>
                   </SelectContent>
                 </Select>
