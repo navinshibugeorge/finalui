@@ -6,3 +6,5 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 export function createClient() {
   return createSupabaseClient(supabaseUrl, supabaseAnonKey)
 }
+
+// This function is used to create a Supabase client instance
