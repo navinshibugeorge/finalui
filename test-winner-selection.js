@@ -30,7 +30,7 @@ async function testWinnerSelection() {
           vendor_email,
           vendor_address,
           bid_amount,
-          is_winner
+          status
         )
       `)
       .eq('status', 'assigned');
@@ -51,7 +51,7 @@ async function testWinnerSelection() {
         console.log(`   Email: ${request.assigned_vendor_email || 'Not set'}`);
         console.log(`   Winning Bid: ₹${request.winning_bid_amount || 'Not set'}`);
         
-        const winningBids = request.vendor_bids?.filter(bid => bid.is_winner) || [];
+        const winningBids = request.vendor_bids?.filter(bid => bid.status === 'won') || [];
         console.log(`   Winning Bids Marked: ${winningBids.length}`);
         
         if (winningBids.length > 0) {
@@ -78,7 +78,7 @@ async function testWinnerSelection() {
           vendor_company,
           vendor_contact,
           bid_amount,
-          is_winner
+          status
         )
       `)
       .eq('status', 'pending')
@@ -138,7 +138,7 @@ async function testWinnerSelection() {
         // Mark winning bid
         const { error: bidUpdateError } = await supabase
           .from('vendor_bids')
-          .update({ is_winner: true })
+          .update({ status: 'won' })
           .eq('request_id', request.request_id)
           .eq('bid_amount', highestBidAmount);
 
@@ -146,6 +146,19 @@ async function testWinnerSelection() {
           console.error(`   ❌ Error marking winning bid: ${bidUpdateError.message}`);
         } else {
           console.log(`   ✅ Winner selected: ${winningBid.vendor_name} (₹${winningBid.bid_amount})`);
+        }
+
+        // Mark losing bids
+        const { error: losingBidsError } = await supabase
+          .from('vendor_bids')
+          .update({ status: 'lost' })
+          .eq('request_id', request.request_id)
+          .neq('bid_amount', highestBidAmount);
+
+        if (losingBidsError) {
+          console.error(`   ❌ Error marking losing bids: ${losingBidsError.message}`);
+        } else {
+          console.log(`   ✅ Losing bids marked for request ${request.request_id}`);
         }
       }
     }

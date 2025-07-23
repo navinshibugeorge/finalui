@@ -31,7 +31,7 @@ import { DashboardLayout } from "@/components/dashboard-layout"
 import { useAuth } from "@/components/auth-provider"
 import { createBid } from "@/lib/aws-api"
 import { useToast } from "@/hooks/use-toast"
-import { pickupRequestService } from "@/lib/pickup-request-service"
+import { pickupRequestService, type PickupRequest } from "@/lib/pickup-request-service"
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 
 interface VendorProfile {
@@ -57,6 +57,7 @@ export function VendorDashboard() {
   const [bidMessage, setBidMessage] = useState("")
   const [submittingBid, setSubmittingBid] = useState(false)
   const [timers, setTimers] = useState<{ [key: string]: number }>({})
+  const [recentWins, setRecentWins] = useState<any[]>([]) // Track recent auction wins
   
   // Available vendors for testing (removed debug mode)
   const [availableVendors, setAvailableVendors] = useState<any[]>([])
@@ -220,13 +221,13 @@ export function VendorDashboard() {
           
           return {
             request_id: req.request_id,
-            industry_name: req.factory_name || req.industry_name,
+            industry_name: "EcoPlast Industries", // Consistent company name
             bin_id: req.bin_id,
             waste_type: req.waste_type,
             fill_level: req.fill_level || 85, // >= 80% triggers the request
             estimated_quantity: req.estimated_quantity,
-            location: req.factory_address || 'Not specified',
-            coordinates: req.coordinates || "0, 0",
+            location: "Industrial Area, Sector 18, Noida",
+            coordinates: req.coordinates || "28.5355, 77.3910",
             created_at: req.created_at,
             bidding_ends_at: req.bidding_ends_at,
             status: req.status,
@@ -235,6 +236,11 @@ export function VendorDashboard() {
             base_bid: baseBid,
             vendor_bids: activeBids,
             waste_image: `/placeholder.svg?height=200&width=300&text=${req.waste_type.toUpperCase()}+WASTE`,
+            // Check if current vendor is the highest bidder
+            is_highest_bidder: activeBids.some(bid => 
+              bid.vendor_id === vendorProfile?.vendor_id && 
+              bid.bid_amount === highestBid
+            ),
           }
         })
       
@@ -273,17 +279,36 @@ export function VendorDashboard() {
       
       // Filter for jobs assigned to this vendor
       const assignedJobs = data.filter(req => 
-        (req.assigned_vendor === vendorProfile?.vendor_id || req.assigned_vendor_id === vendorProfile?.vendor_id) && 
-        (req.status === 'assigned' || req.status === 'bidding')
+        req.assigned_vendor === vendorProfile?.vendor_id && 
+        req.status === 'assigned'
       )
       
       const completedJobs = data.filter(req => 
-        (req.assigned_vendor === vendorProfile?.vendor_id || req.assigned_vendor_id === vendorProfile?.vendor_id) && 
+        req.assigned_vendor === vendorProfile?.vendor_id && 
         req.status === 'completed'
       )
       
-      setMyJobs(assignedJobs)
-      setCompletedJobs(completedJobs)
+      // Enhance job data with more details
+      const enhancedAssignedJobs = assignedJobs.map(job => ({
+        ...job,
+        industry_name: job.factory_name || job.industry_name || 'EcoPlast Industries',
+        industry_address: job.factory_address || 'Industrial Area, Sector 18, Noida',
+        industry_contact: '+91 98765 43210',
+        industry_email: 'operations@ecoplast.com',
+        winning_bid_amount: job.total_amount || job.estimated_price || job.base_bid,
+        assigned_at: job.pickup_date || job.updated_at || job.created_at || new Date().toISOString() // Use pickup_date as assigned time
+      }))
+      
+      const enhancedCompletedJobs = completedJobs.map(job => ({
+        ...job,
+        industry_name: job.factory_name || job.industry_name || 'EcoPlast Industries',
+        industry_address: job.factory_address || 'Industrial Area, Sector 18, Noida',
+        winning_bid_amount: job.total_amount || job.estimated_price || job.base_bid,
+        completed_at: job.created_at || new Date().toISOString()
+      }))
+      
+      setMyJobs(enhancedAssignedJobs)
+      setCompletedJobs(enhancedCompletedJobs)
       
     } catch (error) {
       console.error('Error fetching jobs:', error)
@@ -308,7 +333,7 @@ export function VendorDashboard() {
         
         // Find jobs assigned to this vendor that weren't in myJobs before
         const assignedJobs = data.filter(req => 
-          (req.assigned_vendor === vendorProfile?.vendor_id || req.assigned_vendor_id === vendorProfile?.vendor_id) && 
+          req.assigned_vendor === vendorProfile?.vendor_id && 
           req.status === 'assigned'
         )
         
@@ -318,10 +343,23 @@ export function VendorDashboard() {
         )
         
         if (newWins.length > 0) {
+          // Add new wins to recent wins display
+          const winDetails = newWins.map(job => ({
+            request_id: job.request_id,
+            waste_type: job.waste_type,
+            industry_name: job.industry_name || job.factory_name || 'EcoPlast Industries',
+            industry_address: job.factory_address || 'Industrial Area, Sector 18, Noida',
+            industry_contact: '+91 98765 43210',
+            winning_bid: job.total_amount || job.estimated_price || job.base_bid,
+            timestamp: new Date().toISOString()
+          }))
+          
+          setRecentWins(prev => [...prev, ...winDetails])
+          
           newWins.forEach(job => {
             toast({
               title: "🎉 NEW BID WIN! 🎉",
-              description: `You won the auction for ${job.waste_type} waste at EcoPlast Industries! Payment: ₹${job.winning_bid || job.base_bid}`,
+              description: `You won the auction for ${job.waste_type} waste at EcoPlast Industries! Payment: ₹${job.total_amount || job.estimated_price || job.base_bid}`,
               duration: 8000,
             })
           })
@@ -374,7 +412,12 @@ export function VendorDashboard() {
                 vendor_bids: activeBids,
                 // Update other fields that might have changed
                 status: updated.status,
-                bidding_ends_at: updated.bidding_ends_at
+                bidding_ends_at: updated.bidding_ends_at,
+                // Check if current vendor is the highest bidder
+                is_highest_bidder: activeBids.some(bid => 
+                  bid.vendor_id === vendorProfile?.vendor_id && 
+                  bid.bid_amount === highestBid
+                ),
               }
             }
             return request
@@ -396,60 +439,149 @@ export function VendorDashboard() {
   // Handle automatic winner selection when timer expires
   const handleTimerExpired = async (requestId: string) => {
     try {
-      const service = await import('@/lib/pickup-request-service')
-      const result = await service.selectBidWinner(requestId)
+      console.log(`Timer expired for request ${requestId}, selecting winner...`)
+      
+      // Import the selectBidWinner function
+      const { selectBidWinner } = await import('@/lib/pickup-request-service')
+      const result = await selectBidWinner(requestId)
       
       if (result) {
-        // Refresh data to show updated status
-        await fetchActiveRequests()
-        await fetchMyJobs()
+        console.log(`Winner selected successfully for request ${requestId}`)
         
-        // Check if this vendor won the bid
-        const updatedRequests = await pickupRequestService.getActivePickupRequests()
-        const wonJob = updatedRequests.find(job => 
-          job.request_id === requestId && 
-          (job.assigned_vendor === vendorProfile?.vendor_id || job.assigned_vendor_id === vendorProfile?.vendor_id) &&
-          job.status === 'assigned'
-        )
-        
-        if (wonJob) {
-          // Show winning notification with confetti effect
-          setTimeout(() => {
-            toast({
-              title: "🎉 CONGRATULATIONS! YOU WON THE BID! 🎉",
-              description: `You've won the auction for ${wonJob.waste_type} waste at EcoPlast Industries! Payment: ₹${wonJob.winning_bid || wonJob.base_bid}. Check "My Jobs" tab for pickup details.`,
-              duration: 8000,
-            })
-          }, 100)
-        } else {
-          // Check if this vendor had a bid but didn't win
-          const vendorBids = await pickupRequestService.getActivePickupRequests()
-          const lostBid = vendorBids.find(req => 
-            req.request_id === requestId && 
-            req.vendor_bids?.some((bid: any) => bid.vendor_id === vendorProfile?.vendor_id)
-          )
-          
-          if (lostBid) {
-            // Show losing notification
+        // Add a small delay to allow database to update before refreshing
+        setTimeout(async () => {
+          try {
+            // Refresh data to show updated status
+            await fetchActiveRequests()
+            await fetchMyJobs()
+            
+            // Check if this vendor won the bid
+            const updatedRequests = await pickupRequestService.getActivePickupRequests()
+            const wonJob = updatedRequests.find(job => 
+              job.request_id === requestId && 
+              job.assigned_vendor === vendorProfile?.vendor_id &&
+              job.status === 'assigned'
+            )
+            
+            if (wonJob) {
+              // Add to recent wins for prominent display
+              const newWin = {
+                request_id: requestId,
+                waste_type: wonJob.waste_type,
+                industry_name: wonJob.industry_name || 'EcoPlast Industries',
+                industry_address: wonJob.factory_address || 'Industrial Area, Sector 18, Noida',
+                industry_contact: '+91 98765 43210',
+                winning_bid: wonJob.total_amount || wonJob.estimated_price || wonJob.base_bid,
+                timestamp: new Date().toISOString()
+              }
+              
+              setRecentWins(prev => [...prev, newWin])
+              
+              // Show winning notification with confetti effect
+              setTimeout(() => {
+                toast({
+                  title: "🎉 CONGRATULATIONS! YOU WON THE BID! 🎉",
+                  description: `You've won the auction for ${wonJob.waste_type} waste at ${wonJob.industry_name || 'EcoPlast Industries'}! Payment: ₹${wonJob.total_amount || wonJob.estimated_price || wonJob.base_bid}. Check "My Jobs" tab for pickup details.`,
+                  duration: 8000,
+                })
+              }, 100)
+            } else {
+              // Check if this vendor had a bid but didn't win
+              const activeRequests = await pickupRequestService.getActivePickupRequests()
+              const lostBid = activeRequests.find(req => 
+                req.request_id === requestId && 
+                req.vendor_bids?.some((bid: any) => bid.vendor_id === vendorProfile?.vendor_id)
+              )
+              
+              if (lostBid) {
+                // Show losing notification
+                setTimeout(() => {
+                  toast({
+                    title: "Auction Ended - Better Luck Next Time",
+                    description: `The bidding for ${lostBid.waste_type} waste has ended. Another vendor won this time. Keep bidding to win more auctions!`,
+                    variant: "default",
+                  })
+                }, 100)
+              } else {
+                // Show general auction ended notification
+                setTimeout(() => {
+                  toast({
+                    title: "Bidding Window Closed",
+                    description: "The bidding window has ended and a winner has been selected.",
+                    variant: "default",
+                  })
+                }, 100)
+              }
+            }
+          } catch (refreshError) {
+            console.error('Error refreshing data after winner selection:', refreshError)
+            // Still show a basic notification even if refresh fails
             setTimeout(() => {
               toast({
-                title: "Auction Ended",
-                description: `The bidding for ${lostBid.waste_type} waste has ended. Another vendor won this time. Keep bidding!`,
+                title: "Bidding Window Closed",
+                description: "The bidding window has ended. Please refresh to see the latest updates.",
                 variant: "default",
               })
             }, 100)
           }
-        }
+        }, 1000) // Wait 1 second for database update to propagate
+        
+      } else {
+        console.log(`No winner could be selected for request ${requestId} (no bids or error occurred)`)
+        // Show neutral notification - but be more encouraging
+        setTimeout(() => {
+          toast({
+            title: "Bidding Window Closed",
+            description: "The bidding window has ended. We're processing the auction results - please check 'My Jobs' tab in a moment to see if you won!",
+            variant: "default",
+            duration: 6000,
+          })
+        }, 100)
+        
+        // Still try to refresh data in case the winner was selected despite our error
+        setTimeout(async () => {
+          try {
+            await fetchActiveRequests()
+            await fetchMyJobs()
+          } catch (refreshError) {
+            console.error('Error refreshing after failed winner selection:', refreshError)
+          }
+        }, 2000)
       }
     } catch (error) {
-      console.error('Error selecting winner:', error)
+      console.error('Error selecting winner:', {
+        error: error,
+        message: error instanceof Error ? error.message : 'Unknown error',
+        requestId: requestId,
+        stack: error instanceof Error ? error.stack : undefined
+      })
+      
+      // Run database diagnostics to help with debugging
+      try {
+        const { debugDatabaseAccess } = await import('@/lib/pickup-request-service')
+        await debugDatabaseAccess()
+      } catch (debugError) {
+        console.error('Debug function failed:', debugError)
+      }
+      
       setTimeout(() => {
         toast({
-          title: "Bidding Closed",
-          description: "Bidding window has ended. Winner will be selected automatically.",
+          title: "Bidding Window Closed",
+          description: "The bidding window has ended. There was a technical issue processing the auction, but please check 'My Jobs' tab - you may still have won! You can also refresh the page to see the latest updates.",
           variant: "default",
+          duration: 8000,
         })
       }, 100)
+      
+      // Try to refresh data anyway in case the issue was just with our notification system
+      setTimeout(async () => {
+        try {
+          await fetchActiveRequests()
+          await fetchMyJobs()
+        } catch (refreshError) {
+          console.error('Error refreshing after exception:', refreshError)
+        }
+      }, 1000)
     }
   }
 
@@ -477,12 +609,35 @@ export function VendorDashboard() {
         if (expiredRequestIds.length > 0) {
           setTimeout(() => {
             expiredRequestIds.forEach(async (requestId) => {
-              // Trigger winner selection when timer expires
-              await handleTimerExpired(requestId)
-              
-              setActiveRequests((prev) =>
-                prev.filter((req) => req.request_id !== requestId)
-              )
+              try {
+                // Trigger winner selection when timer expires
+                await handleTimerExpired(requestId)
+                
+                // Remove from active requests after processing
+                setActiveRequests((prev) =>
+                  prev.filter((req) => req.request_id !== requestId)
+                )
+              } catch (timerError) {
+                console.error(`Error handling timer expiration for request ${requestId}:`, {
+                  error: timerError,
+                  message: timerError instanceof Error ? timerError.message : 'Unknown error',
+                  requestId: requestId,
+                  stack: timerError instanceof Error ? timerError.stack : undefined
+                })
+                
+                // Still remove from active requests even if winner selection failed
+                setActiveRequests((prev) =>
+                  prev.filter((req) => req.request_id !== requestId)
+                )
+                
+                // Show user notification about the issue with more specific guidance
+                toast({
+                  title: "Bidding Window Closed",
+                  description: "The bidding window has ended. There was a technical issue, but please check 'My Jobs' tab to see if you won any auctions.",
+                  variant: "default",
+                  duration: 6000,
+                })
+              }
             })
           }, 0)
         }
@@ -497,10 +652,41 @@ export function VendorDashboard() {
   // Calculate total earnings from completed jobs
   const calculateTotalEarnings = (): string => {
     const completedEarnings = completedJobs.reduce((total, job) => {
-      return total + (job.winning_bid || job.base_bid || 0)
+      return total + (job.total_amount || job.estimated_price || job.base_bid || 0)
     }, 0)
     
     return completedEarnings.toFixed(0)
+  }
+
+  // Mark job as completed
+  const handleCompleteJob = async (jobId: string) => {
+    try {
+      // TODO: Implement actual completion logic with backend
+      // For now, just show success message and move to completed
+      
+      toast({
+        title: "🎉 Job Completed Successfully!",
+        description: "Pickup job has been marked as completed. Payment will be processed within 24 hours.",
+      })
+      
+      // Remove from active jobs and add to completed
+      const completedJob = myJobs.find(job => job.request_id === jobId)
+      if (completedJob) {
+        setMyJobs(prev => prev.filter(job => job.request_id !== jobId))
+        setCompletedJobs(prev => [...prev, {
+          ...completedJob,
+          status: 'completed',
+          completed_at: new Date().toISOString()
+        }])
+      }
+    } catch (error) {
+      console.error('Error completing job:', error)
+      toast({
+        title: "Error",
+        description: "Failed to mark job as completed. Please try again.",
+        variant: "destructive",
+      })
+    }
   }
 
   // Place bid on active request
@@ -587,7 +773,12 @@ export function VendorDashboard() {
                   ...request, 
                   current_highest_bid: highestBid,
                   total_bids: totalBids,
-                  vendor_bids: activeBids
+                  vendor_bids: activeBids,
+                  // Check if current vendor is the highest bidder
+                  is_highest_bidder: activeBids.some(bid => 
+                    bid.vendor_id === vendorProfile?.vendor_id && 
+                    bid.bid_amount === highestBid
+                  ),
                 }
               }
               return request
@@ -747,8 +938,39 @@ export function VendorDashboard() {
           </Card>
         )}
 
+        {/* Recent Wins Alert - Special prominent display */}
+        {recentWins.length > 0 && (
+          <Alert className="border-yellow-300 bg-gradient-to-r from-yellow-100 via-orange-100 to-red-100 border-2">
+            <Trophy className="h-6 w-6 text-yellow-600" />
+            <AlertDescription className="text-yellow-900">
+              <div className="flex flex-col space-y-2">
+                <div className="text-lg font-bold">
+                  🎊 AUCTION VICTORY! 🎊 YOU WON {recentWins.length} BID{recentWins.length > 1 ? 'S' : ''}!
+                </div>
+                {recentWins.map((win, index) => (
+                  <div key={index} className="text-sm bg-white/80 p-2 rounded border border-yellow-200">
+                    <strong>{win.waste_type.toUpperCase()} WASTE</strong> at {win.industry_name} - 
+                    Winning Bid: <span className="text-green-700 font-bold">₹{win.winning_bid}</span>
+                    <div className="text-xs text-gray-600 mt-1">
+                      Pickup: {win.industry_address} • Contact: {win.industry_contact}
+                    </div>
+                  </div>
+                ))}
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  onClick={() => setRecentWins([])}
+                  className="w-fit"
+                >
+                  Acknowledge & Continue
+                </Button>
+              </div>
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Winner Announcement Alert */}
-        {myJobs.length > 0 && (
+        {myJobs.length > 0 && recentWins.length === 0 && (
           <Alert className="border-yellow-200 bg-gradient-to-r from-yellow-50 to-orange-50">
             <Trophy className="h-4 w-4 text-yellow-600" />
             <AlertDescription className="text-yellow-800">
@@ -765,6 +987,11 @@ export function VendorDashboard() {
             <Bell className="h-4 w-4 text-orange-600" />
             <AlertDescription className="text-orange-800">
               <strong>{activeRequests.length} active bidding window(s)</strong> - Industry bins are ready for pickup! Place your bids before the 5-minute window closes.
+              {activeRequests.some(req => req.is_highest_bidder) && (
+                <div className="mt-2 p-2 bg-green-100 rounded border border-green-300">
+                  <strong className="text-green-800">🎯 You are currently the HIGHEST BIDDER on {activeRequests.filter(req => req.is_highest_bidder).length} auction(s)!</strong>
+                </div>
+              )}
             </AlertDescription>
           </Alert>
         )}
@@ -838,6 +1065,14 @@ export function VendorDashboard() {
                               BIDDING
                             </div>
                           </Badge>
+                          {request.is_highest_bidder && (
+                            <Badge className="bg-green-100 text-green-800">
+                              <div className="flex items-center gap-1">
+                                <Trophy className="h-4 w-4" />
+                                HIGHEST BIDDER
+                              </div>
+                            </Badge>
+                          )}
                           <div className="flex items-center gap-1 text-sm font-bold text-red-600">
                             <Timer className="h-4 w-4" />
                             {formatTime(timers[request.request_id] || 0)}
@@ -899,7 +1134,7 @@ export function VendorDashboard() {
                               </p>
                             </div>
                             <div className="p-3 bg-white rounded-lg border">
-                              <p className="font-medium">Potential Profit</p>
+                              <p className="font-medium">Amount over base price</p>
                               <p className="text-purple-600 font-bold">
                                 ₹{request.current_highest_bid > 0 ? 
                                   Math.max(0, request.current_highest_bid - request.base_bid) : 
@@ -934,6 +1169,13 @@ export function VendorDashboard() {
                               Bidding window: {formatTime(timers[request.request_id] || 0)} remaining. 
                               <strong> Highest bidder wins and pays the industry for recyclable waste!</strong>
                             </p>
+                            {request.is_highest_bidder && (
+                              <div className="mt-2 p-2 bg-green-100 rounded border border-green-300">
+                                <p className="text-sm text-green-800 font-semibold">
+                                  🎯 You are currently the HIGHEST BIDDER! You're likely to win this auction.
+                                </p>
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -1024,7 +1266,7 @@ export function VendorDashboard() {
                       <div className="flex items-center justify-between">
                         <CardTitle className="text-lg flex items-center gap-2">
                           <Truck className="h-5 w-5 text-blue-600" />
-                          EcoPlast Industries - {job.waste_type.charAt(0).toUpperCase() + job.waste_type.slice(1)} Pickup
+                          {job.industry_name || 'EcoPlast Industries'} - {job.waste_type.charAt(0).toUpperCase() + job.waste_type.slice(1)} Pickup
                         </CardTitle>
                         <Badge className={getStatusColor(job.status)}>
                           <div className="flex items-center gap-1">
@@ -1034,7 +1276,7 @@ export function VendorDashboard() {
                         </Badge>
                       </div>
                       <CardDescription>
-                        Bin {job.bin_id} • Industrial Area, Sector 18, Noida • Winning Bid: ₹{job.winning_bid_amount || job.winning_bid || job.base_bid}
+                        Bin {job.bin_id} • {job.industry_name || 'EcoPlast Industries'}, {job.industry_address || 'Industrial Area, Sector 18, Noida'} • Winning Bid: ₹{job.winning_bid_amount || job.winning_bid || job.base_bid}
                         {job.assigned_at && (
                           <span className="block text-green-600 text-sm mt-1">
                             🎉 Assigned on {new Date(job.assigned_at).toLocaleString()}
@@ -1075,12 +1317,7 @@ export function VendorDashboard() {
                             <Button 
                               size="sm" 
                               className="bg-green-600 hover:bg-green-700"
-                              onClick={() => {
-                                toast({
-                                  title: "🎉 Job Completed!",
-                                  description: "Pickup job marked as completed successfully.",
-                                })
-                              }}
+                              onClick={() => handleCompleteJob(job.request_id)}
                             >
                               <CheckCircle className="mr-2 h-4 w-4" />
                               Mark Complete
@@ -1095,10 +1332,11 @@ export function VendorDashboard() {
                           <div>
                             <p className="font-medium text-sm mb-2">Pickup Address</p>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                              <p className="text-sm font-medium">EcoPlast Industries</p>
-                              <p className="text-sm text-muted-foreground">Industrial Area, Sector 18</p>
+                              <p className="text-sm font-medium">{job.industry_name || 'EcoPlast Industries'}</p>
+                              <p className="text-sm text-muted-foreground">{job.industry_address || 'Industrial Area, Sector 18'}</p>
                               <p className="text-sm text-muted-foreground">Noida, Uttar Pradesh 201301</p>
-                              <p className="text-sm text-muted-foreground">Contact: +91 98765 43210</p>
+                              <p className="text-sm text-muted-foreground">Contact: {job.industry_contact || '+91 98765 43210'}</p>
+                              <p className="text-sm text-muted-foreground">Email: {job.industry_email || 'operations@ecoplast.com'}</p>
                             </div>
                           </div>
                           <div>
@@ -1164,7 +1402,7 @@ export function VendorDashboard() {
                       <div className="flex items-center justify-between">
                         <CardTitle className="text-lg flex items-center gap-2">
                           <CheckCircle className="h-5 w-5 text-green-600" />
-                          EcoPlast Industries - {job.waste_type.charAt(0).toUpperCase() + job.waste_type.slice(1)} ✅
+                          {job.industry_name || 'EcoPlast Industries'} - {job.waste_type.charAt(0).toUpperCase() + job.waste_type.slice(1)} ✅
                         </CardTitle>
                         <Badge className="bg-green-100 text-green-800">
                           <div className="flex items-center gap-1">
@@ -1196,8 +1434,8 @@ export function VendorDashboard() {
                         </div>
                         <div className="p-3 bg-white rounded-lg border">
                           <p className="font-medium">Collection Location</p>
-                          <p className="text-muted-foreground">Industrial Area, Sector 18</p>
-                          <p className="text-xs text-muted-foreground">Noida, UP</p>
+                          <p className="text-muted-foreground">{job.industry_name || 'EcoPlast Industries'}</p>
+                          <p className="text-xs text-muted-foreground">{job.industry_address || 'Industrial Area, Sector 18, Noida'}</p>
                         </div>
                       </div>
                     </CardContent>
