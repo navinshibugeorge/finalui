@@ -28,11 +28,11 @@ import {
   Trophy,
 } from "lucide-react"
 import { DashboardLayout } from "@/components/dashboard-layout"
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import { useAuth } from "@/components/auth-provider"
 import { createBid } from "@/lib/aws-api"
 import { useToast } from "@/hooks/use-toast"
 import { pickupRequestService } from "@/lib/pickup-request-service"
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 
 interface VendorProfile {
   vendor_id: string
@@ -46,6 +46,8 @@ interface VendorProfile {
 export function VendorDashboard() {
   const { user } = useAuth()
   const { toast } = useToast()
+  const supabase = createClientComponentClient()
+  
   const [activeRequests, setActiveRequests] = useState<any[]>([])
   const [myJobs, setMyJobs] = useState<any[]>([])
   const [completedJobs, setCompletedJobs] = useState<any[]>([])
@@ -57,6 +59,9 @@ export function VendorDashboard() {
   const [bidMessage, setBidMessage] = useState("")
   const [submittingBid, setSubmittingBid] = useState(false)
   const [timers, setTimers] = useState<{ [key: string]: number }>({})
+  
+  // Track pending timer expirations that occurred before vendor profile loaded
+  const [pendingExpirations, setPendingExpirations] = useState<string[]>([])
   
   // Available vendors for testing (removed debug mode)
   const [availableVendors, setAvailableVendors] = useState<any[]>([])
@@ -263,27 +268,65 @@ export function VendorDashboard() {
     if (vendorProfile) {
       fetchActiveRequests()
       fetchMyJobs()
+      
+      // Process any pending timer expirations that occurred before vendor profile loaded
+      if (pendingExpirations.length > 0) {
+        console.log('Processing pending timer expirations:', pendingExpirations)
+        const processPendingExpirations = async () => {
+          for (const requestId of pendingExpirations) {
+            await handleTimerExpired(requestId)
+          }
+          setPendingExpirations([]) // Clear pending expirations
+        }
+        processPendingExpirations()
+      }
     }
-  }, [vendorProfile])
+  }, [vendorProfile, pendingExpirations])
 
   // Fetch assigned and completed jobs
   const fetchMyJobs = async () => {
     try {
-      const data = await pickupRequestService.getActivePickupRequests()
+      // Guard: Don't fetch if vendor profile is not loaded
+      if (!vendorProfile?.vendor_id || vendorProfile.vendor_id === 'undefined') {
+        console.log('Cannot fetch jobs: vendor profile not loaded yet', { vendorProfile, vendor_id: vendorProfile?.vendor_id })
+        setMyJobs([])
+        setCompletedJobs([])
+        return
+      }
       
-      // Filter for jobs assigned to this vendor
-      const assignedJobs = data.filter(req => 
-        req.assigned_vendor === vendorProfile?.vendor_id && 
-        (req.status === 'assigned' || req.status === 'bidding')
-      )
+      console.log('Fetching jobs for vendor:', vendorProfile.vendor_id)
       
-      const completedJobs = data.filter(req => 
-        req.assigned_vendor === vendorProfile?.vendor_id && 
-        req.status === 'completed'
-      )
+      // Get assigned jobs for this vendor
+      const { data: assignedJobs, error: assignedError } = await supabase
+        .from('pickup_requests')
+        .select('*')
+        .eq('assigned_vendor', vendorProfile.vendor_id)
+        .eq('status', 'assigned')
+        .order('created_at', { ascending: false })
       
-      setMyJobs(assignedJobs)
-      setCompletedJobs(completedJobs)
+      if (assignedError) {
+        console.error('Error fetching assigned jobs:', assignedError)
+        setMyJobs([])
+      } else {
+        console.log(`Found ${assignedJobs?.length || 0} assigned jobs`)
+        setMyJobs(assignedJobs || [])
+      }
+      
+      // Get completed jobs for this vendor
+      const { data: completedJobs, error: completedError } = await supabase
+        .from('pickup_requests')
+        .select('*')
+        .eq('assigned_vendor', vendorProfile.vendor_id)
+        .eq('status', 'completed')
+        .order('created_at', { ascending: false })
+      
+      if (completedError) {
+        console.error('Error fetching completed jobs:', completedError)
+        setCompletedJobs([])
+      } else {
+        console.log(`Found ${completedJobs?.length || 0} completed jobs`)
+        setCompletedJobs(completedJobs || [])
+      }
       
     } catch (error) {
       console.error('Error fetching jobs:', error)
@@ -396,6 +439,14 @@ export function VendorDashboard() {
   // Handle automatic winner selection when timer expires
   const handleTimerExpired = async (requestId: string) => {
     try {
+      // Guard: Don't check for wins if vendor profile is not loaded
+      if (!vendorProfile?.vendor_id || vendorProfile.vendor_id === 'undefined') {
+        console.log('Cannot check bid result: vendor profile not loaded yet', { vendorProfile, vendor_id: vendorProfile?.vendor_id })
+        // Add to pending expirations to handle when profile loads
+        setPendingExpirations(prev => [...prev.filter(id => id !== requestId), requestId])
+        return
+      }
+      
       const service = await import('@/lib/pickup-request-service')
       const result = await service.selectBidWinner(requestId)
       
@@ -404,37 +455,40 @@ export function VendorDashboard() {
         await fetchActiveRequests()
         await fetchMyJobs()
         
-        // Check if this vendor won the bid
-        const updatedRequests = await pickupRequestService.getActivePickupRequests()
-        const wonJob = updatedRequests.find(job => 
-          job.request_id === requestId && 
-          job.assigned_vendor === vendorProfile?.vendor_id &&
-          job.status === 'assigned'
-        )
+        // Check if this vendor won the bid by querying assigned requests
+        const { data: assignedRequest, error: assignedError } = await supabase
+          .from('pickup_requests')
+          .select('*')
+          .eq('request_id', requestId)
+          .eq('assigned_vendor', vendorProfile.vendor_id)
+          .eq('status', 'assigned')
+          .single()
         
-        if (wonJob) {
+        if (!assignedError && assignedRequest) {
           // Show winning notification with confetti effect
           setTimeout(() => {
             toast({
               title: "🎉 CONGRATULATIONS! YOU WON THE BID! 🎉",
-              description: `You've won the auction for ${wonJob.waste_type} waste at EcoPlast Industries! Payment: ₹${wonJob.winning_bid || wonJob.base_bid}. Check "My Jobs" tab for pickup details.`,
+              description: `You've won the auction for ${assignedRequest.waste_type} waste at ${assignedRequest.factory_name}! Payment: ₹${assignedRequest.total_amount}. Check "My Jobs" tab for pickup details.`,
               duration: 8000,
             })
           }, 100)
         } else {
           // Check if this vendor had a bid but didn't win
-          const vendorBids = await pickupRequestService.getActivePickupRequests()
-          const lostBid = vendorBids.find(req => 
-            req.request_id === requestId && 
-            req.vendor_bids?.some((bid: any) => bid.vendor_id === vendorProfile?.vendor_id)
-          )
+          const { data: lostBids, error: lostBidError } = await supabase
+            .from('vendor_bids')
+            .select('*')
+            .eq('request_id', requestId)
+            .eq('vendor_id', vendorProfile.vendor_id)
+            .eq('status', 'lost')
+            .single()
           
-          if (lostBid) {
+          if (!lostBidError && lostBids) {
             // Show losing notification
             setTimeout(() => {
               toast({
                 title: "Auction Ended",
-                description: `The bidding for ${lostBid.waste_type} waste has ended. Another vendor won this time. Keep bidding!`,
+                description: `The bidding has ended. Another vendor won this time. Keep bidding!`,
                 variant: "default",
               })
             }, 100)
@@ -543,7 +597,7 @@ export function VendorDashboard() {
 
     setSubmittingBid(true)
     try {
-      if (!vendorProfile?.vendor_id) {
+      if (!vendorProfile?.vendor_id || vendorProfile.vendor_id === 'undefined') {
         console.error('Vendor ID not found')
         return
       }
@@ -1024,7 +1078,7 @@ export function VendorDashboard() {
                       <div className="flex items-center justify-between">
                         <CardTitle className="text-lg flex items-center gap-2">
                           <Truck className="h-5 w-5 text-blue-600" />
-                          EcoPlast Industries - {job.waste_type.charAt(0).toUpperCase() + job.waste_type.slice(1)} Pickup
+                          {job.factory_name} - {job.waste_type.charAt(0).toUpperCase() + job.waste_type.slice(1)} Pickup
                         </CardTitle>
                         <Badge className={getStatusColor(job.status)}>
                           <div className="flex items-center gap-1">
@@ -1034,7 +1088,7 @@ export function VendorDashboard() {
                         </Badge>
                       </div>
                       <CardDescription>
-                        Bin {job.bin_id} • Industrial Area, Sector 18, Noida • Winning Bid: ₹{job.total_amount || job.winning_bid || job.base_bid}
+                        {job.factory_address} • Winning Bid: ₹{job.total_amount || job.winning_bid || job.base_bid}
                         {job.assigned_at && (
                           <span className="block text-green-600 text-sm mt-1">
                             🎉 Assigned on {new Date(job.assigned_at).toLocaleString()}
@@ -1108,7 +1162,7 @@ export function VendorDashboard() {
                                 • Collect from Bin {job.bin_id} located at waste storage area
                                 • Verify waste quality before collection
                                 • Report any contamination issues
-                                • Payment will be processed after completion
+                                
                               </p>
                             </div>
                           </div>
@@ -1164,7 +1218,7 @@ export function VendorDashboard() {
                       <div className="flex items-center justify-between">
                         <CardTitle className="text-lg flex items-center gap-2">
                           <CheckCircle className="h-5 w-5 text-green-600" />
-                          EcoPlast Industries - {job.waste_type.charAt(0).toUpperCase() + job.waste_type.slice(1)} ✅
+                          {job.factory_name} - {job.waste_type.charAt(0).toUpperCase() + job.waste_type.slice(1)} ✅
                         </CardTitle>
                         <Badge className="bg-green-100 text-green-800">
                           <div className="flex items-center gap-1">
@@ -1196,8 +1250,7 @@ export function VendorDashboard() {
                         </div>
                         <div className="p-3 bg-white rounded-lg border">
                           <p className="font-medium">Collection Location</p>
-                          <p className="text-muted-foreground">Industrial Area, Sector 18</p>
-                          <p className="text-xs text-muted-foreground">Noida, UP</p>
+                          <p className="text-muted-foreground">{job.factory_address}</p>
                         </div>
                       </div>
                     </CardContent>
