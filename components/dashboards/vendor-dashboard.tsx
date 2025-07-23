@@ -509,7 +509,6 @@ export function VendorDashboard() {
         request_id: selectedRequest.request_id,
         vendor_id: vendorProfile.vendor_id,
         bid_amount: bidAmountNum,
-        message: "", // No message in real auction
       })
 
       if (response.error) {

@@ -495,7 +495,6 @@ export async function createBid(bidData: {
   request_id: string
   vendor_id: string
   bid_amount: number
-  message?: string
 }) {
   try {
     const { pickupRequestService } = await import('./pickup-request-service')
@@ -503,8 +502,7 @@ export async function createBid(bidData: {
     const bid = await pickupRequestService.placeBid(
       bidData.request_id,
       bidData.vendor_id,
-      bidData.bid_amount,
-      bidData.message
+      bidData.bid_amount
     )
 
     console.log("Bid placed successfully:", bid)
