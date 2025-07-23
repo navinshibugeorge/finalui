@@ -25,6 +25,7 @@ import {
   User,
   Loader2,
   Gavel,
+  Trophy,
 } from "lucide-react"
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { useAuth } from "@/components/auth-provider"
@@ -272,12 +273,12 @@ export function VendorDashboard() {
       
       // Filter for jobs assigned to this vendor
       const assignedJobs = data.filter(req => 
-        req.assigned_vendor === vendorProfile?.vendor_id && 
+        (req.assigned_vendor === vendorProfile?.vendor_id || req.assigned_vendor_id === vendorProfile?.vendor_id) && 
         (req.status === 'assigned' || req.status === 'bidding')
       )
       
       const completedJobs = data.filter(req => 
-        req.assigned_vendor === vendorProfile?.vendor_id && 
+        (req.assigned_vendor === vendorProfile?.vendor_id || req.assigned_vendor_id === vendorProfile?.vendor_id) && 
         req.status === 'completed'
       )
       
@@ -307,7 +308,7 @@ export function VendorDashboard() {
         
         // Find jobs assigned to this vendor that weren't in myJobs before
         const assignedJobs = data.filter(req => 
-          req.assigned_vendor === vendorProfile?.vendor_id && 
+          (req.assigned_vendor === vendorProfile?.vendor_id || req.assigned_vendor_id === vendorProfile?.vendor_id) && 
           req.status === 'assigned'
         )
         
@@ -407,7 +408,7 @@ export function VendorDashboard() {
         const updatedRequests = await pickupRequestService.getActivePickupRequests()
         const wonJob = updatedRequests.find(job => 
           job.request_id === requestId && 
-          job.assigned_vendor === vendorProfile?.vendor_id &&
+          (job.assigned_vendor === vendorProfile?.vendor_id || job.assigned_vendor_id === vendorProfile?.vendor_id) &&
           job.status === 'assigned'
         )
         
@@ -744,6 +745,18 @@ export function VendorDashboard() {
               </div>
             </CardContent>
           </Card>
+        )}
+
+        {/* Winner Announcement Alert */}
+        {myJobs.length > 0 && (
+          <Alert className="border-yellow-200 bg-gradient-to-r from-yellow-50 to-orange-50">
+            <Trophy className="h-4 w-4 text-yellow-600" />
+            <AlertDescription className="text-yellow-800">
+              <strong>🎉 CONGRATULATIONS! You have WON {myJobs.length} auction(s)!</strong> 
+              <br />
+              You are now assigned to collect recyclable waste. Check "My Jobs" tab for pickup details and earn money!
+            </AlertDescription>
+          </Alert>
         )}
 
         {/* Active Requests Alert */}

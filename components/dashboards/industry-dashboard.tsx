@@ -745,7 +745,8 @@ export function IndustryDashboard() {
                     {pickupRequests.map((request) => {
                       const bids = request.vendor_bids || []
                       const highestBid = bids.length > 0 ? Math.max(...bids.map((bid: any) => bid.bid_amount)) : 0
-                      const winningBid = bids.find((bid: any) => bid.status === 'won')
+                      const winningBid = bids.find((bid: any) => bid.is_winner === true) || 
+                                       (request.status === 'assigned' && bids.find((bid: any) => bid.vendor_id === (request.assigned_vendor_id || request.assigned_vendor)))
                       
                       return (
                         <TableRow key={request.request_id}>
@@ -800,8 +801,14 @@ export function IndustryDashboard() {
                             )}
                           </TableCell>
                           <TableCell>
-                            {request.total_amount ? (
-                              <span className="font-medium">₹{request.total_amount}</span>
+                            {(request.winning_bid_amount || winningBid?.bid_amount || request.total_amount) ? (
+                              <span className="font-medium text-green-600">
+                                ₹{request.winning_bid_amount || winningBid?.bid_amount || request.total_amount}
+                              </span>
+                            ) : highestBid > 0 ? (
+                              <span className="font-medium text-orange-600">
+                                ₹{highestBid} (Pending)
+                              </span>
                             ) : (
                               <span className="text-muted-foreground">-</span>
                             )}
@@ -904,8 +911,8 @@ export function IndustryDashboard() {
                       .filter(request => request.status === 'assigned' || request.status === 'completed')
                       .map((request) => {
                         const bids = request.vendor_bids || []
-                        const winningBid = bids.find((bid: any) => bid.status === 'won') || 
-                                         bids.find((bid: any) => bid.vendor_id === request.assigned_vendor)
+                        const winningBid = bids.find((bid: any) => bid.is_winner === true) || 
+                                         (request.status === 'assigned' && bids.find((bid: any) => bid.vendor_id === (request.assigned_vendor_id || request.assigned_vendor)))
                         
                         return (
                           <TableRow key={request.request_id}>
@@ -919,18 +926,33 @@ export function IndustryDashboard() {
                               <span className="text-sm">{request.estimated_quantity}L</span>
                             </TableCell>
                             <TableCell>
-                              <div className="flex flex-col">
+                              <div className="flex flex-col space-y-1">
                                 <span className="font-medium">
-                                  {winningBid?.vendor_name || 'Unknown Vendor'}
+                                  {request.assigned_vendor_name || winningBid?.vendor_name || 'Unknown Vendor'}
                                 </span>
+                                {(request.assigned_vendor_company || winningBid?.vendor_company) && (
+                                  <span className="text-xs text-blue-600 font-medium">
+                                    🏢 {request.assigned_vendor_company || winningBid?.vendor_company}
+                                  </span>
+                                )}
                                 <span className="text-xs text-muted-foreground">
-                                  {winningBid?.vendor_email || ''}
+                                  📞 {request.assigned_vendor_contact || winningBid?.vendor_contact || 'N/A'}
                                 </span>
+                                {(request.assigned_vendor_email || winningBid?.vendor_email) && (
+                                  <span className="text-xs text-muted-foreground">
+                                    ✉️ {request.assigned_vendor_email || winningBid?.vendor_email}
+                                  </span>
+                                )}
+                                {(request.assigned_vendor_address || winningBid?.vendor_address) && (
+                                  <span className="text-xs text-muted-foreground">
+                                    📍 {request.assigned_vendor_address || winningBid?.vendor_address}
+                                  </span>
+                                )}
                               </div>
                             </TableCell>
                             <TableCell>
                               <span className="text-green-600 font-bold">
-                                ₹{request.winning_bid || winningBid?.bid_amount || request.base_bid}
+                                ₹{request.winning_bid_amount || winningBid?.bid_amount || request.base_bid}
                               </span>
                             </TableCell>
                             <TableCell>
