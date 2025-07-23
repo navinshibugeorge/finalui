@@ -92,7 +92,7 @@ export function VendorDashboard() {
     const density = WASTE_DENSITY_MAP[wasteTypeKey] || WASTE_DENSITY_MAP.mixed
     const weightKg = Math.round(quantityLiters * density * 10) / 10 // Round to 1 decimal
     const marketValue = Math.round(weightKg * ratePerKg)
-    const baseBid = marketValue // Direct market value without margin
+    const baseBid = marketValue // Direct market value (weight × rate per kg)
     
     return {
       wasteTypeKey,
@@ -918,7 +918,7 @@ export function VendorDashboard() {
               <div>
                 <h3 className="text-lg font-semibold">Active Bidding Windows</h3>
                 <p className="text-sm text-muted-foreground">
-                  Industry bins (≥80% full) with 5-minute bidding windows. Highest bid wins!
+                  Industry bins (≥80% full) with 5-minute bidding windows. Vendors bid to purchase recyclable waste - highest bid wins!
                 </p>
               </div>
               <Button
@@ -985,12 +985,47 @@ export function VendorDashboard() {
                               <p className="text-muted-foreground font-semibold">{request.estimated_quantity}L</p>
                             </div>
                             <div className="p-3 bg-white rounded-lg border">
-                              <p className="font-medium">Current Highest Bid</p>
-                              <p className="text-green-600 font-bold">₹{request.current_highest_bid || 'No bids yet'}</p>
+                              <p className="font-medium">Base Market Value</p>
+                              <p className="text-green-600 font-bold">₹{request.base_bid}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {(() => {
+                                  const details = calculateWasteDetails(request.waste_type, request.estimated_quantity)
+                                  return `${details.weightKg}kg × ₹${details.ratePerKg}/kg`
+                                })()}
+                              </p>
                             </div>
+                            <div className="p-3 bg-white rounded-lg border">
+                              <p className="font-medium">Current Highest Bid</p>
+                              <p className="text-orange-600 font-bold">₹{request.current_highest_bid || 'No bids yet'}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {request.current_highest_bid > 0 ? 
+                                  `${request.current_highest_bid > request.base_bid ? '+' : ''}₹${request.current_highest_bid - request.base_bid} vs base` : 
+                                  'Be the first to bid'
+                                }
+                              </p>
+                            </div>
+                          </div>
+                          
+                          {/* Additional Info Row */}
+                          <div className="grid grid-cols-2 gap-4 text-sm">
                             <div className="p-3 bg-white rounded-lg border">
                               <p className="font-medium">Total Bids</p>
                               <p className="text-blue-600 font-semibold">{request.total_bids || 0} bid(s)</p>
+                              <p className="text-xs text-muted-foreground">
+                                {request.total_bids > 0 ? 'Active auction' : 'No competition yet'}
+                              </p>
+                            </div>
+                            <div className="p-3 bg-white rounded-lg border">
+                              <p className="font-medium">Potential Profit</p>
+                              <p className="text-purple-600 font-bold">
+                                ₹{request.current_highest_bid > 0 ? 
+                                  Math.max(0, request.current_highest_bid - request.base_bid) : 
+                                  '0'
+                                }
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                Premium over market value
+                              </p>
                             </div>
                           </div>
 
@@ -1014,7 +1049,7 @@ export function VendorDashboard() {
                             <p className="text-sm text-blue-800">
                               <AlertCircle className="inline h-4 w-4 mr-1" />
                               Bidding window: {formatTime(timers[request.request_id] || 0)} remaining. 
-                              Highest bidder will be selected automatically when timer expires.
+                              <strong> Highest bidder wins and pays the industry for recyclable waste!</strong>
                             </p>
                           </div>
                         </div>
@@ -1273,10 +1308,12 @@ export function VendorDashboard() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
               <Gavel className="h-6 w-6 text-orange-600" />
-              Live Auction - Place Your Bid
+              Recyclable Waste Auction - Place Your Purchase Bid
             </DialogTitle>
             <DialogDescription>
               {selectedRequest?.industry_name} • {selectedRequest?.waste_type.charAt(0).toUpperCase() + selectedRequest?.waste_type.slice(1)} Waste • {selectedRequest?.estimated_quantity}L
+              <br />
+              <span className="text-green-600 font-medium">You're bidding to BUY this recyclable waste from the industry</span>
             </DialogDescription>
           </DialogHeader>
           
@@ -1299,9 +1336,14 @@ export function VendorDashboard() {
               {/* Current Bidding Status */}
               <div className="grid grid-cols-3 gap-3">
                 <div className="text-center p-3 bg-blue-50 rounded-lg border">
-                  <div className="text-sm text-blue-600 font-medium">BASE PRICE</div>
+                  <div className="text-sm text-blue-600 font-medium">BASE MARKET VALUE</div>
                   <div className="text-lg font-bold text-blue-800">₹{selectedRequest.base_bid}</div>
-                  <div className="text-xs text-blue-600">Starting bid</div>
+                  <div className="text-xs text-blue-600">
+                    {(() => {
+                      const details = calculateWasteDetails(selectedRequest.waste_type, selectedRequest.estimated_quantity)
+                      return `${details.weightKg}kg × ₹${details.ratePerKg}/kg`
+                    })()}
+                  </div>
                 </div>
                 <div className="text-center p-3 bg-green-50 rounded-lg border">
                   <div className="text-sm text-green-600 font-medium">HIGHEST BID</div>
@@ -1324,7 +1366,8 @@ export function VendorDashboard() {
               {/* Bid Input Section */}
               <div className="space-y-3">
                 <div className="text-center">
-                  <Label className="text-lg font-semibold text-gray-800">Enter Your Bid Amount</Label>
+                  <Label className="text-lg font-semibold text-gray-800">Enter Your Purchase Offer (₹)</Label>
+                  <p className="text-sm text-muted-foreground">How much will you pay the industry for this waste?</p>
                 </div>
                 
                 <div className="relative">
