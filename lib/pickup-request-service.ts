@@ -71,8 +71,8 @@ export function calculateBaseBid(wasteType: string, quantityLiters: number): num
   const weightKg = quantityLiters * density
   const baseBid = Math.round(weightKg * ratePerKg)
   
-  // Add 20% margin for pickup service
-  return Math.round(baseBid * 1.2)
+  // Direct market value (weight × rate per kg)
+  return baseBid
 }
 
 export const pickupRequestService = {

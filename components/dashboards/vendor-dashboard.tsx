@@ -1410,7 +1410,7 @@ export function VendorDashboard() {
                     const details = calculateWasteDetails(selectedRequest.waste_type, selectedRequest.estimated_quantity)
                     return (
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Market Value Reference:</span>
+                        <span className="text-muted-foreground">Market Value:</span>
                         <span className="font-medium">₹{details.marketValue} ({details.weightKg}kg × ₹{details.ratePerKg}/kg)</span>
                       </div>
                     )
