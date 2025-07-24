@@ -953,7 +953,7 @@ export function VendorDashboard() {
                               </p>
                             </div>
                             <div className="p-3 bg-white rounded-lg border">
-                              <p className="font-medium">Potential Profit</p>
+                              <p className="font-medium">Amount above base</p>
                               <p className="text-purple-600 font-bold">
                                 ₹{request.current_highest_bid > 0 ? 
                                   Math.max(0, request.current_highest_bid - request.base_bid) : 
